@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Simple "columns + roof" palace glyph; placeholder branding, can be replaced later. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    <path
+        android:fillColor="#E0F2F1"
+        android:pathData="M36,41 L54,25 L72,41 Z" />
+    <path
+        android:fillColor="#E0F2F1"
+        android:pathData="M36,48 h6 v22 h-6 Z M51,48 h6 v22 h-6 Z M66,48 h6 v22 h-6 Z" />
+    <path
+        android:fillColor="#E0F2F1"
+        android:pathData="M32,74 h44 v5 h-44 Z" />
+</vector>
