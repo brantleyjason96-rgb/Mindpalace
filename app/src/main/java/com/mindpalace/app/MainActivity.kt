@@ -664,6 +664,13 @@ private fun SwipeableNote(
                         x >= thresholdPx && canAdvance -> scope.launch {
                             offsetX.animateTo(throwPx, tween(180))
                             nextStatus(note.status)?.let { onAdvanceStatus(note.status, it) }
+                            // Unlike delete, the note stays in the dataset under its new
+                            // status (same key), so this same card composable survives the
+                            // status change — it must settle back to rest, or it's left
+                            // visually thrown off-screen forever.
+                            deleteArmed = false
+                            advanceArmed = false
+                            settle()
                         }
                         else -> settle()
                     }
