@@ -164,8 +164,13 @@ class MainViewModel(
 
     val query = MutableStateFlow("")
 
-    /** Bumped after a delete/restore so an open search re-runs and never shows stale rows. */
+    /** Bumped after a delete/restore so an open search (and Trash) re-run and never show stale rows. */
     private val refresh = MutableStateFlow(0)
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val trash: StateFlow<List<NoteEntity>> =
+        refresh.mapLatest { noteDao.recentlyDeleted(100) }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     /** Id of the note that just finished the save "settle" animation; self-clears. */
     val justSavedId = MutableStateFlow<String?>(null)
@@ -289,6 +294,7 @@ class MainActivity : ComponentActivity() {
             var openNoteId by rememberSaveable { mutableStateOf<String?>(null) }
             var showSettings by rememberSaveable { mutableStateOf(false) }
             var showVoiceCapture by rememberSaveable { mutableStateOf(false) }
+            var showTrash by rememberSaveable { mutableStateOf(false) }
 
             MindPalaceTheme(darkTheme = darkTheme) {
                 val currentOpenId = openNoteId
@@ -298,7 +304,12 @@ class MainActivity : ComponentActivity() {
                         onBack = { showVoiceCapture = false },
                         onSaved = { showVoiceCapture = false },
                     )
-                    showSettings -> SettingsScreen(model = model, onBack = { showSettings = false })
+                    showTrash -> TrashScreen(model = model, onBack = { showTrash = false })
+                    showSettings -> SettingsScreen(
+                        model = model,
+                        onBack = { showSettings = false },
+                        onOpenTrash = { showTrash = true },
+                    )
                     currentOpenId != null -> NoteDetailScreen(
                         model = model,
                         noteId = currentOpenId,
@@ -1161,7 +1172,7 @@ private fun shareFile(context: android.content.Context, file: File, mimeType: St
 }
 
 @Composable
-fun SettingsScreen(model: MainViewModel, onBack: () -> Unit) {
+fun SettingsScreen(model: MainViewModel, onBack: () -> Unit, onOpenTrash: () -> Unit) {
     BackHandler(onBack = onBack)
 
     val context = LocalContext.current
@@ -1244,6 +1255,13 @@ fun SettingsScreen(model: MainViewModel, onBack: () -> Unit) {
                 }
             }
 
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.trash_section_title), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenTrash, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_trash))
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(R.string.settings_version, versionName),
@@ -1251,6 +1269,75 @@ fun SettingsScreen(model: MainViewModel, onBack: () -> Unit) {
                 color = MaterialTheme.colorScheme.outline,
             )
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Trash: recently soft-deleted notes with restore (D-plan screen 2). No permanent/hard delete in
+ * v1 — `NoteCommandHandler` has no such command, and nothing here should add one casually.
+ */
+@Composable
+fun TrashScreen(model: MainViewModel, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val trash by model.trash.collectAsStateWithLifecycle()
+    val snackbarHost = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val restoredMsg = stringResource(R.string.restored_snackbar)
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHost) },
+    ) { padding ->
+        Column(modifier = Modifier.fillMaxSize().padding(padding)) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier.padding(horizontal = 20.dp, vertical = 8.dp),
+            ) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(
+                stringResource(R.string.trash_title),
+                style = MaterialTheme.typography.headlineLarge,
+                modifier = Modifier.padding(horizontal = 20.dp),
+            )
+            Spacer(Modifier.height(12.dp))
+            if (trash.isEmpty()) {
+                Column(
+                    modifier = Modifier.fillMaxSize().padding(horizontal = 40.dp),
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    verticalArrangement = Arrangement.Center,
+                ) {
+                    Text(
+                        stringResource(R.string.trash_empty),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        textAlign = TextAlign.Center,
+                    )
+                }
+            } else {
+                LazyColumn(
+                    modifier = Modifier.fillMaxSize(),
+                    contentPadding = PaddingValues(start = 20.dp, end = 20.dp, top = 8.dp, bottom = 16.dp),
+                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    items(trash, key = { it.id }) { note ->
+                        Column(modifier = Modifier.animateItem()) {
+                            NoteCard(note, expanded = false, onOpen = {})
+                            TextButton(
+                                onClick = {
+                                    model.restore(note.id)
+                                    scope.launch { snackbarHost.showSnackbar(restoredMsg) }
+                                },
+                            ) {
+                                Text(stringResource(R.string.restore))
+                            }
+                        }
+                    }
+                }
+            }
         }
     }
 }
