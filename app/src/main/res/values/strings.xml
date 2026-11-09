@@ -98,4 +98,26 @@
     <string name="photo_ocr_hint">Recognized text will appear here — fix anything before saving.</string>
     <string name="photo_save">Save note</string>
     <string name="photo_saved_snackbar">Photo note saved to Inbox</string>
+
+    <!-- Topics / People / Places vocab -->
+    <string name="vocab_section_title">Vocabulary</string>
+    <string name="open_topics">Open Topics</string>
+    <string name="open_people">Open People</string>
+    <string name="open_places">Open Places</string>
+    <string name="topics_title">Topics</string>
+    <string name="people_title">People</string>
+    <string name="places_title">Places</string>
+    <string name="topics_empty">No topics yet.</string>
+    <string name="people_empty">No people yet.</string>
+    <string name="places_empty">No places yet.</string>
+    <string name="add_topic_hint">New topic name</string>
+    <string name="add_person_hint">New person\'s name</string>
+    <string name="add_place_hint">New place name</string>
+    <string name="add">Add</string>
+
+    <!-- Note links -->
+    <string name="links_section_title">Links</string>
+    <string name="links_empty">No links yet.</string>
+    <string name="add_link">Add link</string>
+    <string name="link_search_hint">Find a note to link…</string>
 </resources>

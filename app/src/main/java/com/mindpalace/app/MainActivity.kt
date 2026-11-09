@@ -129,8 +129,18 @@ import com.mindpalace.app.core.db.FtsQuery
 import com.mindpalace.app.core.db.MindPalaceDatabase
 import com.mindpalace.app.core.db.NoteDao
 import com.mindpalace.app.core.db.NoteEntity
+import com.mindpalace.app.core.db.NoteLinkDao
+import com.mindpalace.app.core.db.NoteLinkEntity
+import com.mindpalace.app.core.db.PersonDao
+import com.mindpalace.app.core.db.PersonEntity
+import com.mindpalace.app.core.db.PlaceDao
+import com.mindpalace.app.core.db.PlaceEntity
 import com.mindpalace.app.core.db.RuleDao
 import com.mindpalace.app.core.db.RuleEntity
+import com.mindpalace.app.core.db.TopicDao
+import com.mindpalace.app.core.db.TopicEntity
+import com.mindpalace.app.core.model.LinkState
+import com.mindpalace.app.core.model.LinkType
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
 import com.mindpalace.app.core.model.DEFAULT_CATEGORIES
@@ -150,6 +160,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -171,9 +182,65 @@ class MainViewModel(
 
     private val noteDao: NoteDao = database.noteDao()
     private val ruleDao: RuleDao = database.ruleDao()
+    private val topicDao: TopicDao = database.topicDao()
+    private val personDao: PersonDao = database.personDao()
+    private val placeDao: PlaceDao = database.placeDao()
+    private val noteLinkDao: NoteLinkDao = database.noteLinkDao()
 
     val rules: StateFlow<List<RuleEntity>> =
         ruleDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val topics: StateFlow<List<TopicEntity>> =
+        topicDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val people: StateFlow<List<PersonEntity>> =
+        personDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val places: StateFlow<List<PlaceEntity>> =
+        placeDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun addTopic(name: String) {
+        viewModelScope.launch {
+            topicDao.insertIfAbsent(
+                TopicEntity(id = UUID.randomUUID().toString(), name = name, createdAt = System.currentTimeMillis(), createdBy = "user"),
+            )
+        }
+    }
+
+    fun addPerson(name: String) {
+        viewModelScope.launch {
+            personDao.insertIfAbsent(
+                PersonEntity(id = UUID.randomUUID().toString(), name = name, createdAt = System.currentTimeMillis()),
+            )
+        }
+    }
+
+    fun addPlace(name: String) {
+        viewModelScope.launch {
+            placeDao.insertIfAbsent(
+                PlaceEntity(id = UUID.randomUUID().toString(), name = name, createdAt = System.currentTimeMillis()),
+            )
+        }
+    }
+
+    /** Links touching [noteId] in either direction (explicit, rule-made, or AI-suggested). */
+    fun linksForNote(noteId: String): Flow<List<NoteLinkEntity>> = noteLinkDao.observeTouching(noteId)
+
+    /** User-made explicit link between two notes (§11) — confirmed immediately, no review step. */
+    fun addLink(fromId: String, toId: String) {
+        viewModelScope.launch {
+            noteLinkDao.insert(
+                NoteLinkEntity(
+                    fromId = fromId,
+                    toId = toId,
+                    type = LinkType.EXPLICIT,
+                    reason = "user link",
+                    state = LinkState.CONFIRMED,
+                    createdAt = System.currentTimeMillis(),
+                ),
+            )
+        }
+    }
 
     fun setRuleEnabled(id: String, enabled: Boolean) {
         viewModelScope.launch { ruleDao.setEnabled(id, enabled) }
@@ -361,6 +428,9 @@ class MainActivity : ComponentActivity() {
             var showTrash by rememberSaveable { mutableStateOf(false) }
             var showRules by rememberSaveable { mutableStateOf(false) }
             var showPhotoCapture by rememberSaveable { mutableStateOf(false) }
+            var showTopics by rememberSaveable { mutableStateOf(false) }
+            var showPeople by rememberSaveable { mutableStateOf(false) }
+            var showPlaces by rememberSaveable { mutableStateOf(false) }
 
             MindPalaceTheme(darkTheme = darkTheme) {
                 val currentOpenId = openNoteId
@@ -377,16 +447,23 @@ class MainActivity : ComponentActivity() {
                     )
                     showTrash -> TrashScreen(model = model, onBack = { showTrash = false })
                     showRules -> RulesScreen(model = model, onBack = { showRules = false })
+                    showTopics -> TopicsScreen(model = model, onBack = { showTopics = false })
+                    showPeople -> PeopleScreen(model = model, onBack = { showPeople = false })
+                    showPlaces -> PlacesScreen(model = model, onBack = { showPlaces = false })
                     showSettings -> SettingsScreen(
                         model = model,
                         onBack = { showSettings = false },
                         onOpenTrash = { showTrash = true },
                         onOpenRules = { showRules = true },
+                        onOpenTopics = { showTopics = true },
+                        onOpenPeople = { showPeople = true },
+                        onOpenPlaces = { showPlaces = true },
                     )
                     currentOpenId != null -> NoteDetailScreen(
                         model = model,
                         noteId = currentOpenId,
                         onBack = { openNoteId = null },
+                        onOpenNote = { openNoteId = it },
                     )
                     else -> MainScreen(
                         model = model,
@@ -1114,7 +1191,7 @@ private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () 
  * unfiltered by status) rather than a new query.
  */
 @Composable
-fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit) {
+fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit, onOpenNote: (String) -> Unit) {
     BackHandler(onBack = onBack)
 
     val allNotes by model.allNotes.collectAsStateWithLifecycle()
@@ -1213,7 +1290,109 @@ fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit) {
                     Text(stringResource(R.string.save), fontWeight = FontWeight.SemiBold)
                 }
             }
+
+            NoteLinksSection(model = model, note = note, allNotes = allNotes, onOpenNote = onOpenNote)
+
             Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** Existing links (tap to open the other note) + an inline filtered picker to add one (D18). */
+@Composable
+private fun NoteLinksSection(
+    model: MainViewModel,
+    note: NoteEntity,
+    allNotes: List<NoteEntity>,
+    onOpenNote: (String) -> Unit,
+) {
+    val links by remember(note.id) { model.linksForNote(note.id) }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    var addingLink by rememberSaveable(note.id) { mutableStateOf(false) }
+    var linkQuery by rememberSaveable(note.id) { mutableStateOf("") }
+
+    val linkedIds = remember(links) { links.map { if (it.fromId == note.id) it.toId else it.fromId }.toSet() }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.links_section_title), style = MaterialTheme.typography.titleMedium)
+
+        if (links.isEmpty()) {
+            Text(
+                stringResource(R.string.links_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            links.forEach { link ->
+                val otherId = if (link.fromId == note.id) link.toId else link.fromId
+                val other = allNotes.find { it.id == otherId } ?: return@forEach
+                val label = other.title ?: other.rawText ?: other.transcript ?: other.ocrText
+                    ?: stringResource(R.string.untitled)
+                Surface(
+                    onClick = { onOpenNote(otherId) },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                ) {
+                    Text(
+                        label,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+        }
+
+        if (!addingLink) {
+            TextButton(onClick = { addingLink = true }, modifier = Modifier.padding(start = 0.dp)) {
+                Text(stringResource(R.string.add_link))
+            }
+        } else {
+            OutlinedTextField(
+                value = linkQuery,
+                onValueChange = { linkQuery = it },
+                modifier = Modifier.fillMaxWidth(),
+                placeholder = { Text(stringResource(R.string.link_search_hint)) },
+                singleLine = true,
+                shape = RoundedCornerShape(20.dp),
+            )
+            val results = remember(linkQuery, allNotes, linkedIds) {
+                val q = linkQuery.trim().lowercase()
+                if (q.isEmpty()) {
+                    emptyList()
+                } else {
+                    allNotes.filter { candidate ->
+                        candidate.id != note.id &&
+                            candidate.id !in linkedIds &&
+                            listOfNotNull(candidate.title, candidate.rawText, candidate.transcript, candidate.ocrText)
+                                .any { it.lowercase().contains(q) }
+                    }.take(10)
+                }
+            }
+            results.forEach { candidate ->
+                val label = candidate.title ?: candidate.rawText ?: candidate.transcript ?: candidate.ocrText
+                    ?: stringResource(R.string.untitled)
+                Surface(
+                    onClick = {
+                        model.addLink(note.id, candidate.id)
+                        addingLink = false
+                        linkQuery = ""
+                    },
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainer,
+                ) {
+                    Text(
+                        label,
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                        style = MaterialTheme.typography.bodyMedium,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
         }
     }
 }
@@ -1260,7 +1439,15 @@ private fun shareFile(context: android.content.Context, file: File, mimeType: St
 }
 
 @Composable
-fun SettingsScreen(model: MainViewModel, onBack: () -> Unit, onOpenTrash: () -> Unit, onOpenRules: () -> Unit) {
+fun SettingsScreen(
+    model: MainViewModel,
+    onBack: () -> Unit,
+    onOpenTrash: () -> Unit,
+    onOpenRules: () -> Unit,
+    onOpenTopics: () -> Unit,
+    onOpenPeople: () -> Unit,
+    onOpenPlaces: () -> Unit,
+) {
     BackHandler(onBack = onBack)
 
     val context = LocalContext.current
@@ -1354,6 +1541,19 @@ fun SettingsScreen(model: MainViewModel, onBack: () -> Unit, onOpenTrash: () -> 
                 Text(stringResource(R.string.rules_section_title), style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = onOpenRules, modifier = Modifier.padding(start = 0.dp)) {
                     Text(stringResource(R.string.open_rules))
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.vocab_section_title), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenTopics, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_topics))
+                }
+                TextButton(onClick = onOpenPeople, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_people))
+                }
+                TextButton(onClick = onOpenPlaces, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_places))
                 }
             }
 
@@ -1589,6 +1789,133 @@ private fun RuleRow(rule: Rule, onToggle: (Boolean) -> Unit, onDelete: () -> Uni
             TextButton(onClick = onDelete, modifier = Modifier.padding(top = 0.dp)) {
                 Text(stringResource(R.string.rule_delete))
             }
+        }
+    }
+}
+
+@Composable
+fun TopicsScreen(model: MainViewModel, onBack: () -> Unit) {
+    val topics by model.topics.collectAsStateWithLifecycle()
+    VocabScreen(
+        title = stringResource(R.string.topics_title),
+        names = topics.map { it.name },
+        addHint = stringResource(R.string.add_topic_hint),
+        emptyText = stringResource(R.string.topics_empty),
+        onAdd = model::addTopic,
+        onBack = onBack,
+    )
+}
+
+@Composable
+fun PeopleScreen(model: MainViewModel, onBack: () -> Unit) {
+    val people by model.people.collectAsStateWithLifecycle()
+    VocabScreen(
+        title = stringResource(R.string.people_title),
+        names = people.map { it.name },
+        addHint = stringResource(R.string.add_person_hint),
+        emptyText = stringResource(R.string.people_empty),
+        onAdd = model::addPerson,
+        onBack = onBack,
+    )
+}
+
+@Composable
+fun PlacesScreen(model: MainViewModel, onBack: () -> Unit) {
+    val places by model.places.collectAsStateWithLifecycle()
+    VocabScreen(
+        title = stringResource(R.string.places_title),
+        names = places.map { it.name },
+        addHint = stringResource(R.string.add_place_hint),
+        emptyText = stringResource(R.string.places_empty),
+        onAdd = model::addPlace,
+        onBack = onBack,
+    )
+}
+
+/**
+ * Shared shell for the three append-only vocabularies (Topics, People, Places — D18). Each is
+ * just a named list today; there's no delete because nothing yet references these by id in a way
+ * that needs cleanup, and no merge/edit because §7 says two plausible matches must ask, not guess
+ * — safer to leave that for when AI-assisted matching actually exists.
+ */
+@Composable
+private fun VocabScreen(
+    title: String,
+    names: List<String>,
+    addHint: String,
+    emptyText: String,
+    onAdd: (String) -> Unit,
+    onBack: () -> Unit,
+) {
+    BackHandler(onBack = onBack)
+    var newName by rememberSaveable { mutableStateOf("") }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(title, style = MaterialTheme.typography.headlineLarge)
+
+            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                OutlinedTextField(
+                    value = newName,
+                    onValueChange = { newName = it },
+                    modifier = Modifier.weight(1f),
+                    placeholder = { Text(addHint) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(20.dp),
+                )
+                Button(
+                    onClick = {
+                        val trimmed = newName.trim()
+                        if (trimmed.isNotBlank()) {
+                            onAdd(trimmed)
+                            newName = ""
+                        }
+                    },
+                    enabled = newName.isNotBlank(),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text(stringResource(R.string.add))
+                }
+            }
+
+            if (names.isEmpty()) {
+                Text(
+                    emptyText,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                    names.forEach { name ->
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(16.dp),
+                            color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        ) {
+                            Text(
+                                name,
+                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
+                                style = MaterialTheme.typography.bodyLarge,
+                            )
+                        }
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
         }
     }
 }

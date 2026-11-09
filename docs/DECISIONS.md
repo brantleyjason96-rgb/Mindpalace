@@ -90,6 +90,18 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D18 — Topics/People/Places: append-only vocab; note links are explicit-only for now
+Nov 9, 2026. Three screens (reachable from Settings) share one `VocabScreen` composable: a name
+field + Add, and a plain list — no delete, no merge/edit. Why: nothing yet references these
+vocabularies from a note (that's the still-open "tags" part of the note-detail screen, deliberately
+NOT built in this pass), so there's nothing to clean up yet; and §7 says two plausible person/place
+matches must ask the user, not silently merge — building a merge UI ahead of any real matching
+logic would be speculative. Note detail gained a **Links** section instead: existing links
+(`noteLinkDao.observeTouching`) shown and tappable (navigates to the other note), plus "Add link"
+→ an inline filtered picker over `allNotes` that inserts a `NoteLinkEntity(type=EXPLICIT,
+state=CONFIRMED)` directly — consistent with how Rules already writes its own table straight from
+the ViewModel (no audit trail for this table, same as rules/categories).
+
 ## D17 — Camera/OCR: bundled ML Kit, system camera/photo-picker intents, no new permission
 Nov 9, 2026. `com.google.mlkit:text-recognition:16.0.1` (the bundled variant — the model ships in
 the APK, ~4MB, never the Play-Services/unbundled variant that lazily installs a dynamic module).
