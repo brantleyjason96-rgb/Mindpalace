@@ -87,4 +87,15 @@
     <string name="voice_save">Save note</string>
     <string name="voice_saved_snackbar">Voice note saved to Inbox</string>
     <string name="voice_error">Didn\'t catch that — try again</string>
+
+    <!-- Photo capture -->
+    <string name="photo_capture_title">Photo capture</string>
+    <string name="photo_camera_button">Photograph a note</string>
+    <string name="photo_intro">Photograph a whiteboard, handout, or note — the text is pulled out on this device, nothing leaves your phone.</string>
+    <string name="photo_take">Take photo</string>
+    <string name="photo_choose_gallery">Choose from gallery</string>
+    <string name="photo_reading">Reading text…</string>
+    <string name="photo_ocr_hint">Recognized text will appear here — fix anything before saving.</string>
+    <string name="photo_save">Save note</string>
+    <string name="photo_saved_snackbar">Photo note saved to Inbox</string>
 </resources>

@@ -90,6 +90,20 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D17 — Camera/OCR: bundled ML Kit, system camera/photo-picker intents, no new permission
+Nov 9, 2026. `com.google.mlkit:text-recognition:16.0.1` (the bundled variant — the model ships in
+the APK, ~4MB, never the Play-Services/unbundled variant that lazily installs a dynamic module).
+Its transitive Play-Services-base manifest declares INTERNET + ACCESS_NETWORK_STATE defensively
+regardless; both are stripped via `tools:node="remove"` in AndroidManifest.xml since OCR never
+makes a network call either way — `PrivacyManifestTest` verified green with them removed.
+Capture uses the system camera app (`MediaStore.ACTION_IMAGE_CAPTURE`, output to a FileProvider
+URI in app-private storage) and the Android 13+ Photo Picker (`PickVisualMedia`) for "choose from
+gallery" — **neither requires a CAMERA or READ_MEDIA_IMAGES permission**, matching the feature
+plan's "no camera permission" requirement exactly. OCR runs on-device against the captured/picked
+image; the recognized text is reviewable/editable before the first save (not yet "sacred" — it
+becomes sacred once saved), then goes through the normal `NoteCommandHandler.create`
+(`source = PHOTO`, `ocrText`, `imagePath` pointing at the saved copy in app-private storage).
+
 ## D16 — Rules engine: keyword matcher → category action, additive derived facts
 Nov 9, 2026. Pure Kotlin evaluator (`core/rules/RuleEngine.kt`, no Android types): a rule is a
 keyword matcher (case-insensitive substring, any-of) and a category action; rules run in list

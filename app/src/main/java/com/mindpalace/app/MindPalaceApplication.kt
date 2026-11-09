@@ -36,6 +36,9 @@ class AppContainer(context: Context) {
 
     /** Exports land here (private, never shared implicitly). */
     val exportDir: java.io.File = context.applicationContext.filesDir.resolve("exports")
+
+    /** Camera/OCR captures land here (private); matches `photos` in file_paths.xml. */
+    val photosDir: java.io.File = context.applicationContext.filesDir.resolve("photos").apply { mkdirs() }
 }
 
 class MindPalaceApplication : Application() {

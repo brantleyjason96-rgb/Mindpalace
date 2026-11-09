@@ -2,4 +2,6 @@
 <paths>
     <!-- Matches AppContainer.exportDir = filesDir/exports -->
     <files-path name="exports" path="exports/" />
+    <!-- Matches AppContainer.photosDir = filesDir/photos — camera captures write here directly. -->
+    <files-path name="photos" path="photos/" />
 </paths>

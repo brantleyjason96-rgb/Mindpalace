@@ -8,7 +8,10 @@ package com.mindpalace.app
 
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.graphics.BitmapFactory
+import android.net.Uri
 import android.os.Bundle
+import android.provider.MediaStore
 import android.speech.RecognitionListener
 import android.speech.RecognizerIntent
 import android.speech.SpeechRecognizer
@@ -18,6 +21,7 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
@@ -60,9 +64,11 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.Image
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
@@ -107,7 +113,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.core.content.FileProvider
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import androidx.lifecycle.ViewModel
@@ -125,6 +134,7 @@ import com.mindpalace.app.core.db.RuleEntity
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
 import com.mindpalace.app.core.model.DEFAULT_CATEGORIES
+import com.mindpalace.app.core.ocr.OcrEngine
 import com.mindpalace.app.core.rules.Rule
 import com.mindpalace.app.core.rules.RuleAction
 import com.mindpalace.app.core.rules.RuleEngine
@@ -135,9 +145,11 @@ import com.mindpalace.app.export.NoteExporter
 import com.mindpalace.app.ui.theme.MindPalaceTheme
 import com.mindpalace.app.ui.theme.ThemeMode
 import com.mindpalace.app.ui.theme.ThemePrefs
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -154,6 +166,7 @@ class MainViewModel(
     private val commands: NoteCommandHandler,
     private val exporter: NoteExporter,
     private val exportDir: File,
+    val photosDir: File,
 ) : ViewModel() {
 
     private val noteDao: NoteDao = database.noteDao()
@@ -278,6 +291,20 @@ class MainViewModel(
         }
     }
 
+    /** Same save-first contract, source=PHOTO: the image stays in app-private storage; the OCR
+     *  text is reviewable/editable right up to this call — after it, it's sacred like any note. */
+    fun capturePhoto(imagePath: String, ocrText: String, onSaved: (noteId: String) -> Unit) {
+        viewModelScope.launch {
+            val note = commands.create(
+                CreateNoteRequest(source = NoteSource.PHOTO, imagePath = imagePath, ocrText = ocrText.ifBlank { null }),
+            )
+            justSavedId.value = note.id
+            onSaved(note.id)
+            delay(SETTLE_ANIMATION_MS)
+            if (justSavedId.value == note.id) justSavedId.value = null
+        }
+    }
+
     fun delete(noteId: String) {
         viewModelScope.launch {
             commands.softDelete(noteId)
@@ -305,6 +332,7 @@ class MainViewModel(
                         container.commands,
                         container.exporter,
                         container.exportDir,
+                        container.photosDir,
                     ) as T
             }
     }
@@ -332,6 +360,7 @@ class MainActivity : ComponentActivity() {
             var showVoiceCapture by rememberSaveable { mutableStateOf(false) }
             var showTrash by rememberSaveable { mutableStateOf(false) }
             var showRules by rememberSaveable { mutableStateOf(false) }
+            var showPhotoCapture by rememberSaveable { mutableStateOf(false) }
 
             MindPalaceTheme(darkTheme = darkTheme) {
                 val currentOpenId = openNoteId
@@ -340,6 +369,11 @@ class MainActivity : ComponentActivity() {
                         model = model,
                         onBack = { showVoiceCapture = false },
                         onSaved = { showVoiceCapture = false },
+                    )
+                    showPhotoCapture -> PhotoCaptureScreen(
+                        model = model,
+                        onBack = { showPhotoCapture = false },
+                        onSaved = { showPhotoCapture = false },
                     )
                     showTrash -> TrashScreen(model = model, onBack = { showTrash = false })
                     showRules -> RulesScreen(model = model, onBack = { showRules = false })
@@ -364,6 +398,7 @@ class MainActivity : ComponentActivity() {
                         onOpenNote = { openNoteId = it },
                         onOpenSettings = { showSettings = true },
                         onOpenVoiceCapture = { showVoiceCapture = true },
+                        onOpenPhotoCapture = { showPhotoCapture = true },
                     )
                 }
             }
@@ -379,6 +414,7 @@ fun MainScreen(
     onOpenNote: (String) -> Unit,
     onOpenSettings: () -> Unit,
     onOpenVoiceCapture: () -> Unit,
+    onOpenPhotoCapture: () -> Unit,
 ) {
     val notes by model.notes.collectAsStateWithLifecycle()
     val results by model.results.collectAsStateWithLifecycle()
@@ -427,6 +463,7 @@ fun MainScreen(
                     }
                 },
                 onVoice = onOpenVoiceCapture,
+                onPhoto = onOpenPhotoCapture,
             )
         },
     ) { padding ->
@@ -954,7 +991,7 @@ private fun statusLabel(status: NoteStatus): String = stringResource(
  * field and reveals Save. Fields clear only after onSave is called (the ViewModel saves first).
  */
 @Composable
-private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () -> Unit) {
+private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () -> Unit, onPhoto: () -> Unit) {
     var title by rememberSaveable { mutableStateOf("") }
     var body by rememberSaveable { mutableStateOf("") }
     var titleFocused by remember { mutableStateOf(false) }
@@ -1019,20 +1056,32 @@ private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () 
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),
                 ) {
-                    val voiceLabel = stringResource(R.string.voice_mic_button)
-                    Surface(
-                        onClick = onVoice,
-                        modifier = Modifier
-                            .size(56.dp)
-                            .semantics { contentDescription = voiceLabel },
-                        shape = CircleShape,
-                        color = MaterialTheme.colorScheme.primaryContainer,
-                    ) {
-                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                            Text(
-                                "🎙",
-                                style = MaterialTheme.typography.titleLarge,
-                            )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        val voiceLabel = stringResource(R.string.voice_mic_button)
+                        Surface(
+                            onClick = onVoice,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .semantics { contentDescription = voiceLabel },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text("🎙", style = MaterialTheme.typography.titleLarge)
+                            }
+                        }
+                        val photoLabel = stringResource(R.string.photo_camera_button)
+                        Surface(
+                            onClick = onPhoto,
+                            modifier = Modifier
+                                .size(56.dp)
+                                .semantics { contentDescription = photoLabel },
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.secondaryContainer,
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text("📷", style = MaterialTheme.typography.titleLarge)
+                            }
                         }
                     }
                 }
@@ -1736,6 +1785,165 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         shape = RoundedCornerShape(20.dp),
                     ) {
                         Text(stringResource(R.string.voice_save))
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Photo capture (D17): system camera intent or the Android photo picker — neither needs a
+ * runtime permission. Recognized text is reviewable/editable before the first save; after Save
+ * it goes through the normal save-first path (source=PHOTO, ocrText, imagePath).
+ */
+@Composable
+fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHost = remember { SnackbarHostState() }
+
+    var photoFile by remember { mutableStateOf<File?>(null) }
+    var pendingCameraFile by remember { mutableStateOf<File?>(null) }
+    var recognizing by remember { mutableStateOf(false) }
+    var ocrText by rememberSaveable { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+
+    fun runOcr(file: File) {
+        recognizing = true
+        scope.launch {
+            ocrText = runCatching { OcrEngine.recognize(context, Uri.fromFile(file)) }.getOrDefault("")
+            recognizing = false
+        }
+    }
+
+    val cameraLauncher = rememberLauncherForActivityResult(ActivityResultContracts.TakePicture()) { success ->
+        val file = pendingCameraFile
+        if (success && file != null) {
+            photoFile = file
+            runOcr(file)
+        }
+    }
+    val pickMediaLauncher = rememberLauncherForActivityResult(ActivityResultContracts.PickVisualMedia()) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val file = withContext(Dispatchers.IO) {
+                    val dest = File(model.photosDir, "${UUID.randomUUID()}.jpg")
+                    context.contentResolver.openInputStream(uri)?.use { input ->
+                        dest.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    dest
+                }
+                photoFile = file
+                runOcr(file)
+            }
+        }
+    }
+
+    fun launchCamera() {
+        val file = File(model.photosDir, "${UUID.randomUUID()}.jpg")
+        pendingCameraFile = file
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.fileprovider", file)
+        // Defensive: some OEM camera apps need an explicit grant even with grantUriPermissions="true".
+        context.packageManager.queryIntentActivities(Intent(MediaStore.ACTION_IMAGE_CAPTURE), 0).forEach {
+            context.grantUriPermission(
+                it.activityInfo.packageName,
+                uri,
+                Intent.FLAG_GRANT_WRITE_URI_PERMISSION or Intent.FLAG_GRANT_READ_URI_PERMISSION,
+            )
+        }
+        cameraLauncher.launch(uri)
+    }
+
+    val savedMsg = stringResource(R.string.photo_saved_snackbar)
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHost) },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.photo_capture_title), style = MaterialTheme.typography.headlineLarge)
+
+            val file = photoFile
+            when {
+                file == null -> {
+                    Text(
+                        stringResource(R.string.photo_intro),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(onClick = ::launchCamera, shape = RoundedCornerShape(20.dp)) {
+                        Text(stringResource(R.string.photo_take))
+                    }
+                    Button(
+                        onClick = {
+                            pickMediaLauncher.launch(
+                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                            )
+                        },
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text(stringResource(R.string.photo_choose_gallery))
+                    }
+                }
+                recognizing -> {
+                    CircularProgressIndicator()
+                    Text(
+                        stringResource(R.string.photo_reading),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                else -> {
+                    val bitmap = remember(file) {
+                        BitmapFactory.decodeFile(file.path)?.asImageBitmap()
+                    }
+                    if (bitmap != null) {
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(220.dp),
+                            contentScale = ContentScale.Crop,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = ocrText,
+                        onValueChange = { ocrText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text(stringResource(R.string.photo_ocr_hint)) },
+                        minLines = 4,
+                        maxLines = 10,
+                        shape = RoundedCornerShape(20.dp),
+                    )
+                    Button(
+                        onClick = {
+                            saving = true
+                            model.capturePhoto(file.absolutePath, ocrText) {
+                                scope.launch { snackbarHost.showSnackbar(savedMsg) }
+                                onSaved()
+                            }
+                        },
+                        enabled = !saving,
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text(stringResource(R.string.photo_save))
                     }
                 }
             }
