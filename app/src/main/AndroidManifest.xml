@@ -24,6 +24,12 @@
          of our own); declared optional so devices without a camera can still install. -->
     <uses-feature android:name="android.hardware.camera" android:required="false" />
 
+    <!-- Sign-off: 2026-11-09 (docs/PERMISSIONS.md, docs/DECISIONS.md D19). Time reminders only;
+         no geofencing/location permission is requested (D14 — deliberately deferred). -->
+    <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
+    <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
+
     <application
         android:name=".MindPalaceApplication"
         android:allowBackup="false"
@@ -56,6 +62,21 @@
                 <data android:mimeType="text/plain" />
             </intent-filter>
         </activity>
+
+        <!-- Fires a notification when a reminder's time arrives. -->
+        <receiver
+            android:name=".reminders.ReminderAlarmReceiver"
+            android:exported="false" />
+
+        <!-- AlarmManager alarms are cleared on reboot; this re-schedules every still-active
+             TIME reminder whose time is still in the future. -->
+        <receiver
+            android:name=".reminders.BootReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.intent.action.BOOT_COMPLETED" />
+            </intent-filter>
+        </receiver>
 
         <!-- Lets the share sheet read an export file from our private dir; no permission
              granted beyond that one file, and only while a share is in progress. -->

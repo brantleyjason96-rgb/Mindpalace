@@ -6,6 +6,7 @@ import androidx.room3.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import com.mindpalace.app.core.commands.NoteCommandHandler
 import com.mindpalace.app.core.db.MindPalaceDatabase
+import com.mindpalace.app.core.reminders.NotificationHelper
 import com.mindpalace.app.export.NoteExporter
 
 /**
@@ -49,5 +50,6 @@ class MindPalaceApplication : Application() {
     override fun onCreate() {
         super.onCreate()
         container = AppContainer(this)
+        NotificationHelper.createChannel(this)
     }
 }

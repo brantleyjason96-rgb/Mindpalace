@@ -22,6 +22,9 @@ import org.robolectric.annotation.Config
  *
  * RECORD_AUDIO is sign-off-approved (docs/PERMISSIONS.md, D15) for the on-device Voice capture
  * screen only; no raw audio is ever stored, and this is still an offline, local-only permission.
+ *
+ * POST_NOTIFICATIONS / SCHEDULE_EXACT_ALARM / RECEIVE_BOOT_COMPLETED are sign-off-approved
+ * (docs/PERMISSIONS.md, D19) for time-based reminders only; still no network.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -33,7 +36,12 @@ class PrivacyManifestTest {
 
     /** Sign-off-approved permissions beyond the androidx self-protection one (docs/PERMISSIONS.md). */
     private val approvedPermissions =
-        setOf("android.permission.RECORD_AUDIO")
+        setOf(
+            "android.permission.RECORD_AUDIO",
+            "android.permission.POST_NOTIFICATIONS",
+            "android.permission.SCHEDULE_EXACT_ALARM",
+            "android.permission.RECEIVE_BOOT_COMPLETED",
+        )
 
     private fun requestedPermissions(): List<String> {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -67,5 +75,13 @@ class PrivacyManifestTest {
     @Test
     fun `RECORD_AUDIO is present for voice capture`() {
         assertEquals(true, requestedPermissions().contains("android.permission.RECORD_AUDIO"))
+    }
+
+    @Test
+    fun `reminder permissions are present`() {
+        val perms = requestedPermissions()
+        assertEquals(true, perms.contains("android.permission.POST_NOTIFICATIONS"))
+        assertEquals(true, perms.contains("android.permission.SCHEDULE_EXACT_ALARM"))
+        assertEquals(true, perms.contains("android.permission.RECEIVE_BOOT_COMPLETED"))
     }
 }

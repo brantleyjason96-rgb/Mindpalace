@@ -120,4 +120,23 @@
     <string name="links_empty">No links yet.</string>
     <string name="add_link">Add link</string>
     <string name="link_search_hint">Find a note to link…</string>
+
+    <!-- Reminders -->
+    <string name="reminder_channel_name">Reminders</string>
+    <string name="reminder_notification_title">Mind Palace reminder</string>
+    <string name="reminder_default_text">Check this note</string>
+    <string name="reminders_section_title">Reminders</string>
+    <string name="open_reminders">Open Reminders</string>
+    <string name="reminders_title">Reminders</string>
+    <string name="reminders_empty">No active reminders.</string>
+    <string name="reminder_note_empty">No reminders on this note.</string>
+    <string name="add_reminder">Remind me</string>
+    <string name="reminder_mark_done">Mark done</string>
+    <string name="reminder_cancel">Cancel</string>
+    <string name="reminder_exact_alarm_title">Exact alarm permission needed</string>
+    <string name="reminder_exact_alarm_body">So this reminder fires at the exact time you pick, Android needs you to allow exact alarms for Mind Palace. Opening system Settings…</string>
+    <string name="reminder_open_settings">Open Settings</string>
+    <string name="reminder_pick_time">Pick date &amp; time</string>
+    <string name="reminder_confirm">Set reminder</string>
+    <string name="reminder_dialog_cancel">Cancel</string>
 </resources>

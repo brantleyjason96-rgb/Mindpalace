@@ -6,6 +6,8 @@ package com.mindpalace.app
 // The UI never touches DAOs for writes. Delete = soft delete, Undo = restore (audited, §3.2).
 // ============================================================================
 
+import android.Manifest
+import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
@@ -65,7 +67,14 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.Image
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
+import androidx.compose.material3.ExperimentalMaterial3Api
+import androidx.compose.material3.TimePicker
+import androidx.compose.material3.rememberDatePickerState
+import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.CircularProgressIndicator
@@ -116,6 +125,7 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.unit.dp
+import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import kotlin.math.abs
 import kotlin.math.roundToInt
@@ -135,6 +145,8 @@ import com.mindpalace.app.core.db.PersonDao
 import com.mindpalace.app.core.db.PersonEntity
 import com.mindpalace.app.core.db.PlaceDao
 import com.mindpalace.app.core.db.PlaceEntity
+import com.mindpalace.app.core.db.ReminderDao
+import com.mindpalace.app.core.db.ReminderEntity
 import com.mindpalace.app.core.db.RuleDao
 import com.mindpalace.app.core.db.RuleEntity
 import com.mindpalace.app.core.db.TopicDao
@@ -144,7 +156,13 @@ import com.mindpalace.app.core.model.LinkType
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
 import com.mindpalace.app.core.model.DEFAULT_CATEGORIES
+import com.mindpalace.app.core.model.ReminderState
+import com.mindpalace.app.core.model.ReminderType
 import com.mindpalace.app.core.ocr.OcrEngine
+import com.mindpalace.app.core.reminders.AlarmScheduler
+import com.mindpalace.app.core.reminders.EXTRA_OPEN_NOTE_ID
+import com.mindpalace.app.core.reminders.millisToSpec
+import com.mindpalace.app.core.reminders.scheduledAtMillis
 import com.mindpalace.app.core.rules.Rule
 import com.mindpalace.app.core.rules.RuleAction
 import com.mindpalace.app.core.rules.RuleEngine
@@ -186,6 +204,7 @@ class MainViewModel(
     private val personDao: PersonDao = database.personDao()
     private val placeDao: PlaceDao = database.placeDao()
     private val noteLinkDao: NoteLinkDao = database.noteLinkDao()
+    private val reminderDao: ReminderDao = database.reminderDao()
 
     val rules: StateFlow<List<RuleEntity>> =
         ruleDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -239,6 +258,42 @@ class MainViewModel(
                     createdAt = System.currentTimeMillis(),
                 ),
             )
+        }
+    }
+
+    val activeReminders: StateFlow<List<ReminderEntity>> =
+        reminderDao.observeByState(ReminderState.ACTIVE)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun remindersForNote(noteId: String): Flow<List<ReminderEntity>> = reminderDao.observeForNote(noteId)
+
+    /** Creates the reminder row and schedules the exact alarm in the same call (D19). */
+    fun addReminder(context: Context, noteId: String, atMillis: Long) {
+        viewModelScope.launch {
+            val reminder = ReminderEntity(
+                id = UUID.randomUUID().toString(),
+                noteId = noteId,
+                type = ReminderType.TIME,
+                spec = millisToSpec(atMillis),
+                state = ReminderState.ACTIVE,
+                createdAt = System.currentTimeMillis(),
+            )
+            reminderDao.insert(reminder)
+            AlarmScheduler.schedule(context, reminder)
+        }
+    }
+
+    fun cancelReminder(context: Context, reminder: ReminderEntity) {
+        viewModelScope.launch {
+            reminderDao.setState(reminder.id, ReminderState.CANCELLED, null)
+            AlarmScheduler.cancel(context, reminder)
+        }
+    }
+
+    fun completeReminder(context: Context, reminder: ReminderEntity) {
+        viewModelScope.launch {
+            reminderDao.setState(reminder.id, ReminderState.DONE, null)
+            AlarmScheduler.cancel(context, reminder)
         }
     }
 
@@ -410,9 +465,14 @@ class MainActivity : ComponentActivity() {
     private val container: AppContainer
         get() = (application as MindPalaceApplication).container
 
+    /** Set by a reminder notification tap (onCreate or onNewIntent); consumed once by the
+     *  LaunchedEffect in setContent, which opens that note. */
+    private val pendingOpenNoteId = mutableStateOf<String?>(null)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        pendingOpenNoteId.value = intent?.getStringExtra(EXTRA_OPEN_NOTE_ID)
         val model = ViewModelProvider(this, MainViewModel.factory(container))[MainViewModel::class.java]
 
         setContent {
@@ -431,6 +491,17 @@ class MainActivity : ComponentActivity() {
             var showTopics by rememberSaveable { mutableStateOf(false) }
             var showPeople by rememberSaveable { mutableStateOf(false) }
             var showPlaces by rememberSaveable { mutableStateOf(false) }
+            var showReminders by rememberSaveable { mutableStateOf(false) }
+
+            val pendingNoteId by pendingOpenNoteId
+            LaunchedEffect(pendingNoteId) {
+                pendingNoteId?.let {
+                    openNoteId = it
+                    showReminders = false
+                    showSettings = false
+                    pendingOpenNoteId.value = null
+                }
+            }
 
             MindPalaceTheme(darkTheme = darkTheme) {
                 val currentOpenId = openNoteId
@@ -450,6 +521,14 @@ class MainActivity : ComponentActivity() {
                     showTopics -> TopicsScreen(model = model, onBack = { showTopics = false })
                     showPeople -> PeopleScreen(model = model, onBack = { showPeople = false })
                     showPlaces -> PlacesScreen(model = model, onBack = { showPlaces = false })
+                    showReminders -> RemindersScreen(
+                        model = model,
+                        onBack = { showReminders = false },
+                        onOpenNote = {
+                            showReminders = false
+                            openNoteId = it
+                        },
+                    )
                     showSettings -> SettingsScreen(
                         model = model,
                         onBack = { showSettings = false },
@@ -458,6 +537,7 @@ class MainActivity : ComponentActivity() {
                         onOpenTopics = { showTopics = true },
                         onOpenPeople = { showPeople = true },
                         onOpenPlaces = { showPlaces = true },
+                        onOpenReminders = { showReminders = true },
                     )
                     currentOpenId != null -> NoteDetailScreen(
                         model = model,
@@ -480,6 +560,12 @@ class MainActivity : ComponentActivity() {
                 }
             }
         }
+    }
+
+    override fun onNewIntent(intent: Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        pendingOpenNoteId.value = intent.getStringExtra(EXTRA_OPEN_NOTE_ID)
     }
 }
 
@@ -1293,6 +1379,8 @@ fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit, o
 
             NoteLinksSection(model = model, note = note, allNotes = allNotes, onOpenNote = onOpenNote)
 
+            ReminderSection(model = model, noteId = note.id)
+
             Spacer(Modifier.height(24.dp))
         }
     }
@@ -1397,6 +1485,169 @@ private fun NoteLinksSection(
     }
 }
 
+/**
+ * Time reminders for one note (D19): existing reminders with Mark done / Cancel, and a
+ * "Remind me" flow — permission checks, then date picker, then time picker, then schedule.
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun ReminderSection(model: MainViewModel, noteId: String) {
+    val context = LocalContext.current
+    val reminders by remember(noteId) { model.remindersForNote(noteId) }
+        .collectAsStateWithLifecycle(initialValue = emptyList())
+    val active = remember(reminders) { reminders.filter { it.state == ReminderState.ACTIVE } }
+
+    var showExactAlarmExplainer by remember { mutableStateOf(false) }
+    var showDatePicker by remember { mutableStateOf(false) }
+    var showTimePicker by remember { mutableStateOf(false) }
+    var pickedDateMillis by remember { mutableStateOf<Long?>(null) }
+
+    val notificationPermissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { /* proceed regardless — the reminder itself still saves and schedules */
+        showDatePicker = true
+    }
+
+    fun startAddReminder() {
+        if (android.os.Build.VERSION.SDK_INT >= 33 &&
+            ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
+            PackageManager.PERMISSION_GRANTED
+        ) {
+            notificationPermissionLauncher.launch(Manifest.permission.POST_NOTIFICATIONS)
+            return
+        }
+        if (!AlarmScheduler.canScheduleExact(context)) {
+            showExactAlarmExplainer = true
+            return
+        }
+        showDatePicker = true
+    }
+
+    val dateFormat = remember { java.text.SimpleDateFormat("EEE, MMM d, h:mm a", java.util.Locale.getDefault()) }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.reminders_section_title), style = MaterialTheme.typography.titleMedium)
+
+        if (active.isEmpty()) {
+            Text(
+                stringResource(R.string.reminder_note_empty),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        } else {
+            active.forEach { reminder ->
+                val atMillis = reminder.scheduledAtMillis()
+                Surface(
+                    modifier = Modifier.fillMaxWidth(),
+                    shape = RoundedCornerShape(16.dp),
+                    color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            if (atMillis != null) dateFormat.format(java.util.Date(atMillis)) else reminder.spec,
+                            style = MaterialTheme.typography.bodyMedium,
+                            modifier = Modifier.weight(1f),
+                        )
+                        TextButton(onClick = { model.completeReminder(context, reminder) }) {
+                            Text(stringResource(R.string.reminder_mark_done))
+                        }
+                        TextButton(onClick = { model.cancelReminder(context, reminder) }) {
+                            Text(stringResource(R.string.reminder_cancel), color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+
+        TextButton(onClick = ::startAddReminder, modifier = Modifier.padding(start = 0.dp)) {
+            Text(stringResource(R.string.add_reminder))
+        }
+    }
+
+    if (showExactAlarmExplainer) {
+        AlertDialog(
+            onDismissRequest = { showExactAlarmExplainer = false },
+            title = { Text(stringResource(R.string.reminder_exact_alarm_title)) },
+            text = { Text(stringResource(R.string.reminder_exact_alarm_body)) },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        showExactAlarmExplainer = false
+                        context.startActivity(
+                            Intent(android.provider.Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM).apply {
+                                data = Uri.parse("package:${context.packageName}")
+                            },
+                        )
+                    },
+                ) { Text(stringResource(R.string.reminder_open_settings)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showExactAlarmExplainer = false }) {
+                    Text(stringResource(R.string.reminder_dialog_cancel))
+                }
+            },
+        )
+    }
+
+    if (showDatePicker) {
+        val datePickerState = rememberDatePickerState()
+        DatePickerDialog(
+            onDismissRequest = { showDatePicker = false },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        pickedDateMillis = datePickerState.selectedDateMillis
+                        showDatePicker = false
+                        if (pickedDateMillis != null) showTimePicker = true
+                    },
+                ) { Text(stringResource(R.string.reminder_pick_time)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDatePicker = false }) { Text(stringResource(R.string.reminder_dialog_cancel)) }
+            },
+        ) {
+            DatePicker(state = datePickerState)
+        }
+    }
+
+    if (showTimePicker) {
+        val dateMillis = pickedDateMillis
+        if (dateMillis == null) {
+            showTimePicker = false
+        } else {
+            val timePickerState = rememberTimePickerState()
+            AlertDialog(
+                onDismissRequest = { showTimePicker = false },
+                title = { Text(stringResource(R.string.reminder_pick_time)) },
+                text = { TimePicker(state = timePickerState) },
+                confirmButton = {
+                    TextButton(
+                        onClick = {
+                            val date = java.time.Instant.ofEpochMilli(dateMillis)
+                                .atZone(java.time.ZoneOffset.UTC)
+                                .toLocalDate()
+                            val atMillis = java.time.LocalDateTime
+                                .of(date, java.time.LocalTime.of(timePickerState.hour, timePickerState.minute))
+                                .atZone(java.time.ZoneId.systemDefault())
+                                .toInstant()
+                                .toEpochMilli()
+                            model.addReminder(context, noteId, atMillis)
+                            showTimePicker = false
+                            pickedDateMillis = null
+                        },
+                    ) { Text(stringResource(R.string.reminder_confirm)) }
+                },
+                dismissButton = {
+                    TextButton(onClick = { showTimePicker = false }) { Text(stringResource(R.string.reminder_dialog_cancel)) }
+                },
+            )
+        }
+    }
+}
+
 @Composable
 private fun StatusPickerRow(selected: NoteStatus, onSelect: (NoteStatus) -> Unit, modifier: Modifier = Modifier) {
     val options = listOf(
@@ -1447,6 +1698,7 @@ fun SettingsScreen(
     onOpenTopics: () -> Unit,
     onOpenPeople: () -> Unit,
     onOpenPlaces: () -> Unit,
+    onOpenReminders: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
 
@@ -1554,6 +1806,13 @@ fun SettingsScreen(
                 }
                 TextButton(onClick = onOpenPlaces, modifier = Modifier.padding(start = 0.dp)) {
                     Text(stringResource(R.string.open_places))
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.reminders_section_title), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenReminders, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_reminders))
                 }
             }
 
@@ -2271,6 +2530,87 @@ fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         shape = RoundedCornerShape(20.dp),
                     ) {
                         Text(stringResource(R.string.photo_save))
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/** Every ACTIVE reminder across all notes (D19), reachable from Settings. */
+@Composable
+fun RemindersScreen(model: MainViewModel, onBack: () -> Unit, onOpenNote: (String) -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val context = LocalContext.current
+    val reminders by model.activeReminders.collectAsStateWithLifecycle()
+    val allNotes by model.allNotes.collectAsStateWithLifecycle()
+    val dateFormat = remember { java.text.SimpleDateFormat("EEE, MMM d, h:mm a", java.util.Locale.getDefault()) }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.reminders_title), style = MaterialTheme.typography.headlineLarge)
+
+            if (reminders.isEmpty()) {
+                Text(
+                    stringResource(R.string.reminders_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    reminders.forEach { reminder ->
+                        val note = allNotes.find { it.id == reminder.noteId }
+                        val label = note?.title ?: note?.rawText ?: note?.transcript ?: note?.ocrText
+                            ?: stringResource(R.string.untitled)
+                        val atMillis = reminder.scheduledAtMillis()
+                        Card(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(20.dp),
+                            colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+                        ) {
+                            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                                Text(
+                                    if (atMillis != null) dateFormat.format(java.util.Date(atMillis)) else reminder.spec,
+                                    style = MaterialTheme.typography.titleMedium,
+                                )
+                                Surface(
+                                    onClick = { onOpenNote(reminder.noteId) },
+                                    color = androidx.compose.ui.graphics.Color.Transparent,
+                                ) {
+                                    Text(
+                                        label,
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                }
+                                Row {
+                                    TextButton(onClick = { model.completeReminder(context, reminder) }) {
+                                        Text(stringResource(R.string.reminder_mark_done))
+                                    }
+                                    TextButton(onClick = { model.cancelReminder(context, reminder) }) {
+                                        Text(stringResource(R.string.reminder_cancel), color = MaterialTheme.colorScheme.error)
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

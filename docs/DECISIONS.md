@@ -90,6 +90,18 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D19 — Reminders: AlarmManager, time-based only, three permissions approved
+Nov 9, 2026. Owner sign-off for `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, and
+`RECEIVE_BOOT_COMPLETED` (docs/PERMISSIONS.md). Scope is TIME reminders only — place/geofenced
+reminders stay deferred per D14 ("time-based reminders ship first; places follow"); no location
+permission is requested here. `ReminderAlarmReceiver` fires a notification when a reminder's exact
+time arrives; `BootReceiver` re-schedules every still-active, still-future TIME reminder after a
+reboot (AlarmManager drops all alarms on reboot otherwise). A reminder is created from the note
+detail screen (date+time picker → `AlarmScheduler.schedule`); a global Reminders screen
+(Settings) lists every ACTIVE reminder with Mark done / Cancel, both of which cancel the
+underlying alarm. `ReminderState.DONE`/`CANCELLED` are terminal — no undo, consistent with rules
+and derived facts not going through the audited note-mutation path.
+
 ## D18 — Topics/People/Places: append-only vocab; note links are explicit-only for now
 Nov 9, 2026. Three screens (reachable from Settings) share one `VocabScreen` composable: a name
 field + Add, and a plain list — no delete, no merge/edit. Why: nothing yet references these

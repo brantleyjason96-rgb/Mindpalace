@@ -180,6 +180,18 @@ interface ReminderDao {
     @Query("SELECT * FROM reminders WHERE state = :state ORDER BY created_at ASC")
     fun observeByState(state: ReminderState): Flow<List<ReminderEntity>>
 
+    @Query("SELECT * FROM reminders WHERE note_id = :noteId ORDER BY created_at DESC")
+    fun observeForNote(noteId: String): Flow<List<ReminderEntity>>
+
+    @Query("SELECT * FROM reminders WHERE id = :id")
+    suspend fun byId(id: String): ReminderEntity?
+
+    @Query(
+        "SELECT * FROM reminders WHERE state = 'ACTIVE' AND type = 'TIME' " +
+            "ORDER BY created_at ASC",
+    )
+    suspend fun activeTimeReminders(): List<ReminderEntity>
+
     @Query("UPDATE reminders SET state = :state, snoozed_until = :snoozedUntil WHERE id = :id")
     suspend fun setState(id: String, state: ReminderState, snoozedUntil: Long?): Int
 
