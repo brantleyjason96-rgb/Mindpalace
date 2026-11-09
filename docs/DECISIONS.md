@@ -78,3 +78,21 @@ The visible UI is a marked placeholder. Deferred, with their hooks in place: rul
 ## D12 — Version bump policy
 Nov 8, 2026. `versionCode 1 / versionName 0.1.0`. Bump on any schema change, permission change, or
 Phase completion. Room schema files must be committed (done).
+
+## D13 — Night-loop model: llama.cpp + user-supplied GGUF (sideloaded)
+Nov 9, 2026. Runtime is llama.cpp (native, via JNI), not a Google-format runtime, so the same GGUF
+Jason already runs in PocketPal works. Reference model: **Qwen3 4B Q4_K_M (~2.5 GB), measured
+~10 tok/s generation on the S26 Ultra** (owner-reported, via PocketPal). No download path exists
+(no INTERNET): the model file is chosen via a file picker or `adb push`; the app never fetches it.
+Design rules: thinking mode OFF (thinking tokens would burn the night budget), JSON output
+constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goes ONLY to
+`proposals` (origin `ai:<run>` after the user approves), charging+idle constraints, stop on thermal
+or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
+notes/hour; the loop works on notes changed since the last run, not the whole archive.
+
+## D14 — Geofenced place reminders are in scope
+Nov 9, 2026. Owner decision. Cost accepted: location permission (background access for reliable
+triggers) and likely Google Play Services geofencing. To be recorded in `docs/PERMISSIONS.md` when
+built; `PrivacyManifestTest` gets a deliberate, documented update then (never silently loosened).
+Time-based reminders ship first; places follow. Still open: whether Play Services geofencing is
+acceptable vs. a Play-Services-free fallback.
