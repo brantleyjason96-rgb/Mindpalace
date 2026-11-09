@@ -53,4 +53,18 @@
     <string name="export_markdown">Export Markdown</string>
     <string name="settings_version">Version %1$s</string>
     <string name="export_failed">Export failed — try again</string>
+
+    <!-- Voice capture -->
+    <string name="voice_capture_title">Voice capture</string>
+    <string name="voice_mic_button">Speak a note</string>
+    <string name="voice_permission_title">Microphone access</string>
+    <string name="voice_permission_body">Mind Palace uses the mic only to turn your speech into text, on this device. Nothing is sent anywhere, and no audio is kept — just the words.</string>
+    <string name="voice_permission_grant">Allow microphone</string>
+    <string name="voice_permission_denied">Microphone access was denied. Enable it in system Settings to use voice capture.</string>
+    <string name="voice_listening">Listening…</string>
+    <string name="voice_tap_to_speak">Tap the mic to start</string>
+    <string name="voice_transcript_hint">What you say will appear here…</string>
+    <string name="voice_save">Save note</string>
+    <string name="voice_saved_snackbar">Voice note saved to Inbox</string>
+    <string name="voice_error">Didn\'t catch that — try again</string>
 </resources>

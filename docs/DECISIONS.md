@@ -90,6 +90,15 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D15 — Voice capture: on-device SpeechRecognizer, RECORD_AUDIO approved
+Nov 9, 2026. Owner sign-off to add `android.permission.RECORD_AUDIO` (docs/PERMISSIONS.md),
+`PrivacyManifestTest` updated deliberately to allow it. Implementation: `SpeechRecognizer` with
+`RecognizerIntent.EXTRA_PREFER_OFFLINE = true` (on-device, no network attempted regardless — D4
+holds either way). Dedicated "Voice capture" screen shows a permission explainer before the system
+prompt and a live transcript while listening. On Save, the transcript goes straight through
+`NoteCommandHandler.create` (`source = VOICE`, `transcript = ...`) — same save-first path as every
+other source. No raw audio is recorded or stored; only the transcript.
+
 ## D14 — Geofenced place reminders are in scope
 Nov 9, 2026. Owner decision. Cost accepted: location permission (background access for reliable
 triggers) and likely Google Play Services geofencing. To be recorded in `docs/PERMISSIONS.md` when

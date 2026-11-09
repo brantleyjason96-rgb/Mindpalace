@@ -7,12 +7,18 @@ package com.mindpalace.app
 // ============================================================================
 
 import android.content.Intent
+import android.content.pm.PackageManager
 import android.os.Bundle
+import android.speech.RecognitionListener
+import android.speech.RecognizerIntent
+import android.speech.SpeechRecognizer
 import android.text.format.DateUtils
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
@@ -70,6 +76,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -86,6 +93,8 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -215,6 +224,19 @@ class MainViewModel(
         }
     }
 
+    /** Same save-first contract, source=VOICE: the transcript IS the note, no raw audio kept. */
+    fun captureVoice(transcript: String, onSaved: (noteId: String) -> Unit) {
+        viewModelScope.launch {
+            val note = commands.create(
+                CreateNoteRequest(source = NoteSource.VOICE, transcript = transcript.ifBlank { null }),
+            )
+            justSavedId.value = note.id
+            onSaved(note.id)
+            delay(SETTLE_ANIMATION_MS)
+            if (justSavedId.value == note.id) justSavedId.value = null
+        }
+    }
+
     fun delete(noteId: String) {
         viewModelScope.launch {
             commands.softDelete(noteId)
@@ -266,10 +288,16 @@ class MainActivity : ComponentActivity() {
             }
             var openNoteId by rememberSaveable { mutableStateOf<String?>(null) }
             var showSettings by rememberSaveable { mutableStateOf(false) }
+            var showVoiceCapture by rememberSaveable { mutableStateOf(false) }
 
             MindPalaceTheme(darkTheme = darkTheme) {
                 val currentOpenId = openNoteId
                 when {
+                    showVoiceCapture -> VoiceCaptureScreen(
+                        model = model,
+                        onBack = { showVoiceCapture = false },
+                        onSaved = { showVoiceCapture = false },
+                    )
                     showSettings -> SettingsScreen(model = model, onBack = { showSettings = false })
                     currentOpenId != null -> NoteDetailScreen(
                         model = model,
@@ -285,6 +313,7 @@ class MainActivity : ComponentActivity() {
                         },
                         onOpenNote = { openNoteId = it },
                         onOpenSettings = { showSettings = true },
+                        onOpenVoiceCapture = { showVoiceCapture = true },
                     )
                 }
             }
@@ -299,6 +328,7 @@ fun MainScreen(
     onThemeModeChange: (ThemeMode) -> Unit,
     onOpenNote: (String) -> Unit,
     onOpenSettings: () -> Unit,
+    onOpenVoiceCapture: () -> Unit,
 ) {
     val notes by model.notes.collectAsStateWithLifecycle()
     val results by model.results.collectAsStateWithLifecycle()
@@ -346,6 +376,7 @@ fun MainScreen(
                         showUndo(savedMsg, undoLabel) { model.delete(id) }
                     }
                 },
+                onVoice = onOpenVoiceCapture,
             )
         },
     ) { padding ->
@@ -873,7 +904,7 @@ private fun statusLabel(status: NoteStatus): String = stringResource(
  * field and reveals Save. Fields clear only after onSave is called (the ViewModel saves first).
  */
 @Composable
-private fun Composer(onSave: (title: String, body: String) -> Unit) {
+private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () -> Unit) {
     var title by rememberSaveable { mutableStateOf("") }
     var body by rememberSaveable { mutableStateOf("") }
     var titleFocused by remember { mutableStateOf(false) }
@@ -933,6 +964,28 @@ private fun Composer(onSave: (title: String, body: String) -> Unit) {
                     shape = RoundedCornerShape(24.dp),
                     colors = fieldColors,
                 )
+                AnimatedVisibility(
+                    visible = !canSave,
+                    enter = fadeIn() + scaleIn(),
+                    exit = fadeOut() + scaleOut(),
+                ) {
+                    val voiceLabel = stringResource(R.string.voice_mic_button)
+                    Surface(
+                        onClick = onVoice,
+                        modifier = Modifier
+                            .size(56.dp)
+                            .semantics { contentDescription = voiceLabel },
+                        shape = CircleShape,
+                        color = MaterialTheme.colorScheme.primaryContainer,
+                    ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                            Text(
+                                "🎙",
+                                style = MaterialTheme.typography.titleLarge,
+                            )
+                        }
+                    }
+                }
                 AnimatedVisibility(
                     visible = canSave,
                     enter = fadeIn() + scaleIn(),
@@ -1197,6 +1250,206 @@ fun SettingsScreen(model: MainViewModel, onBack: () -> Unit) {
                 style = MaterialTheme.typography.labelSmall,
                 color = MaterialTheme.colorScheme.outline,
             )
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * Voice capture (D15). Mic access only while this screen is open and listening; nothing is
+ * recorded to disk — the transcript IS the note. One utterance per tap (start/stop), tapping
+ * again appends another utterance so a longer thought can be built up before Save.
+ */
+@Composable
+fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    val snackbarHost = remember { SnackbarHostState() }
+
+    var permissionGranted by remember {
+        mutableStateOf(
+            androidx.core.content.ContextCompat.checkSelfPermission(
+                context,
+                android.Manifest.permission.RECORD_AUDIO,
+            ) == PackageManager.PERMISSION_GRANTED,
+        )
+    }
+    var permissionDenied by remember { mutableStateOf(false) }
+    var listening by remember { mutableStateOf(false) }
+    var transcript by rememberSaveable { mutableStateOf("") }
+    var partial by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+
+    val permissionLauncher = rememberLauncherForActivityResult(
+        ActivityResultContracts.RequestPermission(),
+    ) { granted ->
+        permissionGranted = granted
+        permissionDenied = !granted
+    }
+
+    val recognizerAvailable = remember { SpeechRecognizer.isRecognitionAvailable(context) }
+    val recognizer = remember(recognizerAvailable) {
+        if (recognizerAvailable) SpeechRecognizer.createSpeechRecognizer(context) else null
+    }
+    DisposableEffect(recognizer) {
+        onDispose { recognizer?.destroy() }
+    }
+
+    fun startListening() {
+        if (!permissionGranted) {
+            permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO)
+            return
+        }
+        val r = recognizer ?: return
+        partial = ""
+        r.setRecognitionListener(object : RecognitionListener {
+            override fun onReadyForSpeech(params: Bundle?) {}
+            override fun onBeginningOfSpeech() {}
+            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onBufferReceived(buffer: ByteArray?) {}
+            override fun onEndOfSpeech() {}
+            override fun onError(error: Int) {
+                listening = false
+                partial = ""
+                scope.launch { snackbarHost.showSnackbar(context.getString(R.string.voice_error)) }
+            }
+            override fun onResults(results: Bundle?) {
+                listening = false
+                val heard = results
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    .orEmpty()
+                partial = ""
+                if (heard.isNotBlank()) {
+                    transcript = if (transcript.isBlank()) heard else "$transcript $heard"
+                }
+            }
+            override fun onPartialResults(partialResults: Bundle?) {
+                partial = partialResults
+                    ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
+                    ?.firstOrNull()
+                    .orEmpty()
+            }
+            override fun onEvent(eventType: Int, params: Bundle?) {}
+        })
+        val intent = Intent(RecognizerIntent.ACTION_RECOGNIZE_SPEECH).apply {
+            putExtra(RecognizerIntent.EXTRA_LANGUAGE_MODEL, RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            putExtra(RecognizerIntent.EXTRA_PARTIAL_RESULTS, true)
+            putExtra(RecognizerIntent.EXTRA_PREFER_OFFLINE, true)
+            putExtra(RecognizerIntent.EXTRA_CALLING_PACKAGE, context.packageName)
+        }
+        listening = true
+        r.startListening(intent)
+    }
+
+    fun stopListening() {
+        recognizer?.stopListening()
+        listening = false
+    }
+
+    val savedMsg = stringResource(R.string.voice_saved_snackbar)
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHost) },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.voice_capture_title), style = MaterialTheme.typography.headlineLarge)
+
+            when {
+                !recognizerAvailable -> Text(
+                    stringResource(R.string.voice_error),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                permissionDenied -> Text(
+                    stringResource(R.string.voice_permission_denied),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.error,
+                )
+                !permissionGranted -> {
+                    Text(
+                        stringResource(R.string.voice_permission_title),
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                    Text(
+                        stringResource(R.string.voice_permission_body),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Button(
+                        onClick = { permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) },
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text(stringResource(R.string.voice_permission_grant))
+                    }
+                }
+                else -> {
+                    Box(
+                        modifier = Modifier.fillMaxWidth(),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Surface(
+                            onClick = { if (listening) stopListening() else startListening() },
+                            modifier = Modifier.size(96.dp),
+                            shape = CircleShape,
+                            color = if (listening) {
+                                MaterialTheme.colorScheme.error
+                            } else {
+                                MaterialTheme.colorScheme.primaryContainer
+                            },
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                Text("🎙", style = MaterialTheme.typography.displaySmall)
+                            }
+                        }
+                    }
+                    Text(
+                        if (listening) stringResource(R.string.voice_listening) else stringResource(R.string.voice_tap_to_speak),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
+                    )
+                    val shownText = listOf(transcript, partial).filter { it.isNotBlank() }.joinToString(" ")
+                    Text(
+                        shownText.ifBlank { stringResource(R.string.voice_transcript_hint) },
+                        style = MaterialTheme.typography.bodyLarge,
+                        color = if (shownText.isBlank()) {
+                            MaterialTheme.colorScheme.outline
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                    Button(
+                        onClick = {
+                            saving = true
+                            model.captureVoice(transcript) {
+                                scope.launch { snackbarHost.showSnackbar(savedMsg) }
+                                onSaved()
+                            }
+                        },
+                        enabled = transcript.isNotBlank() && !saving,
+                        shape = RoundedCornerShape(20.dp),
+                    ) {
+                        Text(stringResource(R.string.voice_save))
+                    }
+                }
+            }
             Spacer(Modifier.height(24.dp))
         }
     }

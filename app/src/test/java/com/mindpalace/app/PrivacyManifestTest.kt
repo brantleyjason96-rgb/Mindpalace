@@ -19,6 +19,9 @@ import org.robolectric.annotation.Config
  * `com.mindpalace.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` — an app-private,
  * signature-level self-protection permission (it scopes dynamic broadcast receivers to this
  * app only). It grants NO external capability; anything else still fails the test.
+ *
+ * RECORD_AUDIO is sign-off-approved (docs/PERMISSIONS.md, D15) for the on-device Voice capture
+ * screen only; no raw audio is ever stored, and this is still an offline, local-only permission.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -27,6 +30,10 @@ class PrivacyManifestTest {
     /** Documented, benign, app-private permission added by androidx.core. Not a capability. */
     private val androidxInternalSelfProtection =
         setOf("com.mindpalace.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION")
+
+    /** Sign-off-approved permissions beyond the androidx self-protection one (docs/PERMISSIONS.md). */
+    private val approvedPermissions =
+        setOf("android.permission.RECORD_AUDIO")
 
     private fun requestedPermissions(): List<String> {
         val context = ApplicationProvider.getApplicationContext<Context>()
@@ -45,14 +52,20 @@ class PrivacyManifestTest {
     }
 
     @Test
-    fun `app requests no permissions beyond the androidx internal self-protection one`() {
-        val unknown = requestedPermissions().filter { it !in androidxInternalSelfProtection }
+    fun `app requests no permissions beyond the approved ones`() {
+        val unknown = requestedPermissions()
+            .filter { it !in androidxInternalSelfProtection && it !in approvedPermissions }
         assertEquals(
-            "Merged manifest must request zero permissions (app-private androidx-core " +
-                "self-protection excepted).Any new permission needs sign-off + an entry above " +
-                "with a written justification.",
+            "Merged manifest must request zero permissions beyond the approved list " +
+                "(app-private androidx-core self-protection excepted). Any new permission needs " +
+                "sign-off + an entry above and in docs/PERMISSIONS.md with a written justification.",
             emptyList<String>(),
             unknown,
         )
+    }
+
+    @Test
+    fun `RECORD_AUDIO is present for voice capture`() {
+        assertEquals(true, requestedPermissions().contains("android.permission.RECORD_AUDIO"))
     }
 }

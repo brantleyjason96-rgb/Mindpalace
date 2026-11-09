@@ -8,6 +8,10 @@
       Adding ANY permission requires the owner's explicit sign-off.
     -->
 
+    <!-- Sign-off: 2026-11-09 (docs/PERMISSIONS.md, docs/DECISIONS.md D15). Mic audio only, for
+         on-device SpeechRecognizer; no audio is ever written to disk. -->
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+
     <application
         android:name=".MindPalaceApplication"
         android:allowBackup="false"
