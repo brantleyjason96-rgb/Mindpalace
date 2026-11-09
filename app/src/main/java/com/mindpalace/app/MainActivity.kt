@@ -120,8 +120,17 @@ import com.mindpalace.app.core.db.FtsQuery
 import com.mindpalace.app.core.db.MindPalaceDatabase
 import com.mindpalace.app.core.db.NoteDao
 import com.mindpalace.app.core.db.NoteEntity
+import com.mindpalace.app.core.db.RuleDao
+import com.mindpalace.app.core.db.RuleEntity
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
+import com.mindpalace.app.core.model.DEFAULT_CATEGORIES
+import com.mindpalace.app.core.rules.Rule
+import com.mindpalace.app.core.rules.RuleAction
+import com.mindpalace.app.core.rules.RuleEngine
+import com.mindpalace.app.core.rules.RuleMatcher
+import com.mindpalace.app.core.rules.toEntity
+import com.mindpalace.app.core.rules.toRule
 import com.mindpalace.app.export.NoteExporter
 import com.mindpalace.app.ui.theme.MindPalaceTheme
 import com.mindpalace.app.ui.theme.ThemeMode
@@ -138,6 +147,7 @@ import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import java.io.File
+import java.util.UUID
 
 class MainViewModel(
     database: MindPalaceDatabase,
@@ -147,6 +157,32 @@ class MainViewModel(
 ) : ViewModel() {
 
     private val noteDao: NoteDao = database.noteDao()
+    private val ruleDao: RuleDao = database.ruleDao()
+
+    val rules: StateFlow<List<RuleEntity>> =
+        ruleDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun setRuleEnabled(id: String, enabled: Boolean) {
+        viewModelScope.launch { ruleDao.setEnabled(id, enabled) }
+    }
+
+    fun addRule(keywords: List<String>, category: String) {
+        viewModelScope.launch {
+            ruleDao.upsert(
+                Rule(
+                    id = UUID.randomUUID().toString(),
+                    version = 1,
+                    enabled = true,
+                    matcher = RuleMatcher(keywords),
+                    action = RuleAction(category),
+                ).toEntity(),
+            )
+        }
+    }
+
+    fun deleteRule(id: String) {
+        viewModelScope.launch { ruleDao.delete(id) }
+    }
 
     /** Unfiltered (ignores [statusFilter]) — the detail screen needs to find a note by id
      *  regardless of which status filter the browse list currently has applied. */
@@ -295,6 +331,7 @@ class MainActivity : ComponentActivity() {
             var showSettings by rememberSaveable { mutableStateOf(false) }
             var showVoiceCapture by rememberSaveable { mutableStateOf(false) }
             var showTrash by rememberSaveable { mutableStateOf(false) }
+            var showRules by rememberSaveable { mutableStateOf(false) }
 
             MindPalaceTheme(darkTheme = darkTheme) {
                 val currentOpenId = openNoteId
@@ -305,10 +342,12 @@ class MainActivity : ComponentActivity() {
                         onSaved = { showVoiceCapture = false },
                     )
                     showTrash -> TrashScreen(model = model, onBack = { showTrash = false })
+                    showRules -> RulesScreen(model = model, onBack = { showRules = false })
                     showSettings -> SettingsScreen(
                         model = model,
                         onBack = { showSettings = false },
                         onOpenTrash = { showTrash = true },
+                        onOpenRules = { showRules = true },
                     )
                     currentOpenId != null -> NoteDetailScreen(
                         model = model,
@@ -1172,7 +1211,7 @@ private fun shareFile(context: android.content.Context, file: File, mimeType: St
 }
 
 @Composable
-fun SettingsScreen(model: MainViewModel, onBack: () -> Unit, onOpenTrash: () -> Unit) {
+fun SettingsScreen(model: MainViewModel, onBack: () -> Unit, onOpenTrash: () -> Unit, onOpenRules: () -> Unit) {
     BackHandler(onBack = onBack)
 
     val context = LocalContext.current
@@ -1262,6 +1301,13 @@ fun SettingsScreen(model: MainViewModel, onBack: () -> Unit, onOpenTrash: () -> 
                 }
             }
 
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.rules_section_title), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenRules, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_rules))
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(R.string.settings_version, versionName),
@@ -1337,6 +1383,162 @@ fun TrashScreen(model: MainViewModel, onBack: () -> Unit) {
                         }
                     }
                 }
+            }
+        }
+    }
+}
+
+/**
+ * Rules list + editor (D16, backlog screen 5). Keyword matcher → category action; enable/disable,
+ * add, remove, and a "test against sample text" box that runs [RuleEngine] purely client-side
+ * (no DB write) so you can check a rule before it ever touches a real note.
+ */
+@Composable
+fun RulesScreen(model: MainViewModel, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val rules by model.rules.collectAsStateWithLifecycle()
+    var newKeywords by rememberSaveable { mutableStateOf("") }
+    var newCategory by rememberSaveable { mutableStateOf(DEFAULT_CATEGORIES.first()) }
+    var sampleText by rememberSaveable { mutableStateOf("") }
+
+    val sampleMatch = remember(rules, sampleText) {
+        if (sampleText.isBlank()) {
+            null
+        } else {
+            RuleEngine.firstMatch(rules.mapNotNull { it.toRule() }, sampleText)
+        }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.rules_title), style = MaterialTheme.typography.headlineLarge)
+
+            if (rules.isEmpty()) {
+                Text(
+                    stringResource(R.string.rules_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    rules.forEach { entity ->
+                        val rule = remember(entity) { entity.toRule() }
+                        if (rule != null) {
+                            RuleRow(
+                                rule = rule,
+                                onToggle = { model.setRuleEnabled(entity.id, it) },
+                                onDelete = { model.deleteRule(entity.id) },
+                            )
+                        }
+                    }
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.new_rule_title), style = MaterialTheme.typography.titleMedium)
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    DEFAULT_CATEGORIES.forEach { category ->
+                        FilterChip(
+                            selected = newCategory == category,
+                            onClick = { newCategory = category },
+                            label = { Text(category) },
+                            colors = FilterChipDefaults.filterChipColors(
+                                selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
+                                selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
+                            ),
+                        )
+                    }
+                }
+                OutlinedTextField(
+                    value = newKeywords,
+                    onValueChange = { newKeywords = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(stringResource(R.string.rule_keywords_hint)) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(20.dp),
+                )
+                Button(
+                    onClick = {
+                        val keywords = newKeywords.split(",").map { it.trim() }.filter { it.isNotBlank() }
+                        if (keywords.isNotEmpty()) {
+                            model.addRule(keywords, newCategory)
+                            newKeywords = ""
+                        }
+                    },
+                    enabled = newKeywords.isNotBlank(),
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text(stringResource(R.string.add_rule))
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(stringResource(R.string.test_sample_title), style = MaterialTheme.typography.titleMedium)
+                OutlinedTextField(
+                    value = sampleText,
+                    onValueChange = { sampleText = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(stringResource(R.string.test_sample_hint)) },
+                    minLines = 2,
+                    maxLines = 4,
+                    shape = RoundedCornerShape(20.dp),
+                )
+                AnimatedVisibility(visible = sampleText.isNotBlank()) {
+                    Text(
+                        if (sampleMatch != null) {
+                            stringResource(R.string.test_match_found, sampleMatch.action.category)
+                        } else {
+                            stringResource(R.string.test_no_match)
+                        },
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun RuleRow(rule: Rule, onToggle: (Boolean) -> Unit, onDelete: () -> Unit) {
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = RoundedCornerShape(20.dp),
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f)) {
+                    Text(rule.action.category, style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        rule.matcher.keywords.joinToString(", "),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                androidx.compose.material3.Switch(checked = rule.enabled, onCheckedChange = onToggle)
+            }
+            TextButton(onClick = onDelete, modifier = Modifier.padding(top = 0.dp)) {
+                Text(stringResource(R.string.rule_delete))
             }
         }
     }

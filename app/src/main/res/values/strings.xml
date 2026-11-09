@@ -60,6 +60,20 @@
     <string name="restore">Restore</string>
     <string name="restored_snackbar">Note restored</string>
 
+    <!-- Rules -->
+    <string name="rules_section_title">Rules</string>
+    <string name="open_rules">Open Rules</string>
+    <string name="rules_title">Rules</string>
+    <string name="rules_empty">No rules yet. Notes stay in Inbox until you add one.</string>
+    <string name="rule_delete">Remove rule</string>
+    <string name="new_rule_title">New rule</string>
+    <string name="rule_keywords_hint">Keywords, comma separated</string>
+    <string name="add_rule">Add rule</string>
+    <string name="test_sample_title">Test against sample text</string>
+    <string name="test_sample_hint">Try a sentence…</string>
+    <string name="test_match_found">Would set category: %1$s</string>
+    <string name="test_no_match">No rule would match — stays in Inbox</string>
+
     <!-- Voice capture -->
     <string name="voice_capture_title">Voice capture</string>
     <string name="voice_mic_button">Speak a note</string>

@@ -11,6 +11,10 @@ import com.mindpalace.app.core.model.CATEGORY_INBOX
 import com.mindpalace.app.core.model.DerivedField
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
+import com.mindpalace.app.core.rules.Rule
+import com.mindpalace.app.core.rules.RuleAction
+import com.mindpalace.app.core.rules.RuleMatcher
+import com.mindpalace.app.core.rules.toEntity
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -151,6 +155,57 @@ class NoteCommandHandlerTest {
         } catch (ignored: NoteMissingException) {
             // expected
         }
+    }
+
+    @Test
+    fun `a matching enabled rule adds a second category, alongside the system default`() = runTest {
+        val rule = Rule(
+            id = "r1",
+            version = 1,
+            enabled = true,
+            matcher = RuleMatcher(listOf("algebra")),
+            action = RuleAction("Classroom"),
+        )
+        db.ruleDao().upsert(rule.toEntity())
+
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "algebra quiz tomorrow"))
+
+        val derived = db.derivedDao().forNote(note.id)
+        assertEquals(2, derived.size)
+        assertTrue(derived.any { it.value == CATEGORY_INBOX && it.origin == "system" })
+        assertTrue(derived.any { it.value == "Classroom" && it.origin == "rule:r1" })
+    }
+
+    @Test
+    fun `a disabled rule never fires`() = runTest {
+        val rule = Rule(
+            id = "r1",
+            version = 1,
+            enabled = false,
+            matcher = RuleMatcher(listOf("algebra")),
+            action = RuleAction("Classroom"),
+        )
+        db.ruleDao().upsert(rule.toEntity())
+
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "algebra quiz tomorrow"))
+
+        assertEquals(1, db.derivedDao().forNote(note.id).size)
+    }
+
+    @Test
+    fun `a non-matching rule leaves only the system default category`() = runTest {
+        val rule = Rule(
+            id = "r1",
+            version = 1,
+            enabled = true,
+            matcher = RuleMatcher(listOf("geometry")),
+            action = RuleAction("Classroom"),
+        )
+        db.ruleDao().upsert(rule.toEntity())
+
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "buy oat milk"))
+
+        assertEquals(1, db.derivedDao().forNote(note.id).size)
     }
 
     @Test

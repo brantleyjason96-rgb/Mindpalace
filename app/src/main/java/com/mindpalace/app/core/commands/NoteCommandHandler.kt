@@ -13,6 +13,8 @@ import com.mindpalace.app.core.model.DerivedField
 import com.mindpalace.app.core.model.NoteSnapshot
 import com.mindpalace.app.core.model.NoteStatus
 import com.mindpalace.app.core.model.Origin
+import com.mindpalace.app.core.rules.RuleEngine
+import com.mindpalace.app.core.rules.toRule
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
@@ -80,8 +82,34 @@ class NoteCommandHandler(
                     at = at,
                 ),
             )
+            applyRules(note, at)
         }
         return note
+    }
+
+    /**
+     * Rules engine (D16): runs once, right after save, inside the same transaction. The first
+     * enabled rule whose keywords match the note's text sets an ADDITIONAL category derived fact
+     * (origin=rule:<id>), alongside the system Inbox default — it never overwrites or removes the
+     * default, so this step is safely re-runnable (idempotent) and never loses the system origin.
+     */
+    private suspend fun applyRules(note: NoteEntity, at: Long) {
+        val rules = database.ruleDao().enabled().mapNotNull { it.toRule() }
+        if (rules.isEmpty()) return
+        val searchableText = listOfNotNull(note.title, note.rawText, note.transcript, note.ocrText)
+            .joinToString(" ")
+        if (searchableText.isBlank()) return
+        val match = RuleEngine.firstMatch(rules, searchableText) ?: return
+        database.derivedDao().upsert(
+            DerivedEntity(
+                noteId = note.id,
+                field = DerivedField.CATEGORY,
+                value = match.action.category,
+                origin = Origin.RuleOrigin(match.id).encode(),
+                confidence = 1f,
+                createdAt = at,
+            ),
+        )
     }
 
     // ------------------------------------------------------ single-field edits

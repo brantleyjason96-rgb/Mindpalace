@@ -230,6 +230,9 @@ interface RuleDao {
 
     @Query("UPDATE rules SET enabled = :enabled, version = version + 1 WHERE id = :id")
     suspend fun setEnabled(id: String, enabled: Boolean): Int
+
+    @Query("DELETE FROM rules WHERE id = :id")
+    suspend fun delete(id: String): Int
 }
 
 @Dao

@@ -90,6 +90,18 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D16 — Rules engine: keyword matcher → category action, additive derived facts
+Nov 9, 2026. Pure Kotlin evaluator (`core/rules/RuleEngine.kt`, no Android types): a rule is a
+keyword matcher (case-insensitive substring, any-of) and a category action; rules run in list
+order and the first enabled match wins. Runs once, inside `NoteCommandHandler.create`'s existing
+transaction, right after the system Inbox default is seeded. A match ADDS a second CATEGORY
+derived row (`origin = rule:<id>`) alongside the system one rather than replacing it — the derived
+table's primary key is (note_id, field, value, origin), so this is naturally idempotent and never
+destroys the system default. Reconciling "which category wins when several exist" is a surfacing
+concern (Phase 4, D11), deliberately not solved here. Rules currently apply only at capture time
+("after save"), not retroactively on edits — re-evaluating on every raw-text edit is a plausible
+future extension, not built because nothing asked for it yet.
+
 ## D15 — Voice capture: on-device SpeechRecognizer, RECORD_AUDIO approved
 Nov 9, 2026. Owner sign-off to add `android.permission.RECORD_AUDIO` (docs/PERMISSIONS.md),
 `PrivacyManifestTest` updated deliberately to allow it. Implementation: `SpeechRecognizer` with
