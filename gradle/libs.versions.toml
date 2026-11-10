@@ -29,6 +29,7 @@ compose-ui-tooling-preview = { group = "androidx.compose.ui", name = "ui-tooling
 compose-material3 = { group = "androidx.compose.material3", name = "material3" }
 room3-runtime = { group = "androidx.room3", name = "room3-runtime", version.ref = "room3" }
 room3-compiler = { group = "androidx.room3", name = "room3-compiler", version.ref = "room3" }
+room3-testing = { group = "androidx.room3", name = "room3-testing", version.ref = "room3" }
 sqlite-bundled = { group = "androidx.sqlite", name = "sqlite-bundled", version.ref = "sqliteBundled" }
 # JVM variant of the same library: carries the desktop (macOS) native SQLite so Robolectric
 # unit tests can run the real FTS5 engine. See docs/DECISIONS.md D3.

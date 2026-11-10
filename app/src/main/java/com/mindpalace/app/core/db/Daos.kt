@@ -13,6 +13,19 @@ import com.mindpalace.app.core.model.ProposalState
 import com.mindpalace.app.core.model.ReminderState
 import kotlinx.coroutines.flow.Flow
 
+@Dao
+interface CategoryDao {
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insert(category: CategoryEntity)
+
+    @Query("SELECT * FROM categories ORDER BY position ASC")
+    fun observeAll(): Flow<List<CategoryEntity>>
+
+    @Query("SELECT COALESCE(MAX(position), -1) FROM categories")
+    suspend fun maxPosition(): Int
+}
+
 /**
  * Note DAO. Only the command handler performs writes to `notes`; reads are open to the UI layer.
  * All mutating queries are revision-guarded so concurrent edits fail loudly instead of

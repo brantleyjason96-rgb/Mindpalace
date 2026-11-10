@@ -90,6 +90,24 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D20 — Editable categories: new `categories` table, schema v1 → v2
+Nov 9, 2026. Closes the last gap in the original screen backlog's Settings item ("editable
+categories (6 defaults in DEFAULT_CATEGORIES)"). New `categories` table (name TEXT PRIMARY KEY,
+position, created_at), added via `MIGRATION_1_2` which also seeds the six original defaults in
+their original order — `DEFAULT_CATEGORIES` in Model.kt is now only that seed list, not the live
+source of truth. Settings > Categories reuses the existing `VocabScreen` (same shape as
+Topics/People/Places, D18): add-only, no rename/delete, for the same reason — rule actions and
+derived CATEGORY facts already reference categories by name string, and renaming/deleting would
+orphan those references without a cascade story this doesn't need yet. Rules' "New rule" category
+picker now reads from this table instead of the hardcoded constant, so a category added in
+Settings immediately becomes available there too. First real schema migration in this project;
+added `androidx.room3:room3-testing` + a `MigrationTestHelper`-based test verifying the seed data
+survives the 1→2 migration in order. One non-obvious wiring note: Robolectric's local JVM unit
+tests reuse the **main** `debug` variant's merged assets directory (confirmed via
+`test_config.properties` → `android_merged_assets`), not a test-only one — so the exported schema
+JSON had to be added to the `main` sourceSet's assets, not `test`, for `MigrationTestHelper` to
+find it at all.
+
 ## D19 — Reminders: AlarmManager, time-based only, three permissions approved
 Nov 9, 2026. Owner sign-off for `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, and
 `RECEIVE_BOOT_COMPLETED` (docs/PERMISSIONS.md). Scope is TIME reminders only — place/geofenced

@@ -17,6 +17,7 @@ import androidx.room3.RoomDatabase
         NoteEntity::class,
         NoteFtsEntity::class,
         DerivedEntity::class,
+        CategoryEntity::class,
         TopicEntity::class,
         NoteLinkEntity::class,
         ReminderEntity::class,
@@ -29,13 +30,14 @@ import androidx.room3.RoomDatabase
         AuditEntity::class,
         JobEntity::class,
     ],
-    version = 1,
+    version = 2,
     exportSchema = true,
 )
 abstract class MindPalaceDatabase : RoomDatabase() {
 
     abstract fun noteDao(): NoteDao
     abstract fun derivedDao(): DerivedDao
+    abstract fun categoryDao(): CategoryDao
     abstract fun auditDao(): AuditDao
     abstract fun topicDao(): TopicDao
     abstract fun noteLinkDao(): NoteLinkDao

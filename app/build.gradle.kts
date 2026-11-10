@@ -16,8 +16,8 @@ android {
         applicationId = "com.mindpalace.app"
         minSdk = 33
         targetSdk = 37
-        versionCode = 4
-        versionName = "0.4.0"
+        versionCode = 5
+        versionName = "0.5.0"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
@@ -38,6 +38,15 @@ android {
 
     buildFeatures {
         compose = true
+    }
+
+    sourceSets {
+        // Exported schema JSON (app/schemas) — read by MigrationTestHelper. Robolectric local
+        // unit tests reuse the main *debug* merged assets dir, not a test-only one, so this has
+        // to live on "main" rather than "test" for MigrationTestHelper to find it at all.
+        getByName("main") {
+            assets.srcDirs("$projectDir/schemas")
+        }
     }
 
     testOptions {
@@ -89,6 +98,7 @@ dependencies {
     testImplementation(libs.androidx.test.core)
     testImplementation(libs.androidx.test.ext.junit)
     testImplementation(libs.kotlinx.coroutines.test)
+    testImplementation(libs.room3.testing)
     // Desktop natives for BundledSQLiteDriver in JVM (Robolectric) tests.
     testImplementation(libs.sqlite.bundled.jvm)
 }

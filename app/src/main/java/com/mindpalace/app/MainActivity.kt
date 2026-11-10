@@ -135,6 +135,8 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.mindpalace.app.core.commands.CreateNoteRequest
 import com.mindpalace.app.core.commands.NoteCommandHandler
+import com.mindpalace.app.core.db.CategoryDao
+import com.mindpalace.app.core.db.CategoryEntity
 import com.mindpalace.app.core.db.FtsQuery
 import com.mindpalace.app.core.db.MindPalaceDatabase
 import com.mindpalace.app.core.db.NoteDao
@@ -155,7 +157,6 @@ import com.mindpalace.app.core.model.LinkState
 import com.mindpalace.app.core.model.LinkType
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
-import com.mindpalace.app.core.model.DEFAULT_CATEGORIES
 import com.mindpalace.app.core.model.ReminderState
 import com.mindpalace.app.core.model.ReminderType
 import com.mindpalace.app.core.ocr.OcrEngine
@@ -200,6 +201,7 @@ class MainViewModel(
 
     private val noteDao: NoteDao = database.noteDao()
     private val ruleDao: RuleDao = database.ruleDao()
+    private val categoryDao: CategoryDao = database.categoryDao()
     private val topicDao: TopicDao = database.topicDao()
     private val personDao: PersonDao = database.personDao()
     private val placeDao: PlaceDao = database.placeDao()
@@ -208,6 +210,16 @@ class MainViewModel(
 
     val rules: StateFlow<List<RuleEntity>> =
         ruleDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val categories: StateFlow<List<CategoryEntity>> =
+        categoryDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    fun addCategory(name: String) {
+        viewModelScope.launch {
+            val position = categoryDao.maxPosition() + 1
+            categoryDao.insert(CategoryEntity(name = name, position = position, createdAt = System.currentTimeMillis()))
+        }
+    }
 
     val topics: StateFlow<List<TopicEntity>> =
         topicDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -492,6 +504,7 @@ class MainActivity : ComponentActivity() {
             var showPeople by rememberSaveable { mutableStateOf(false) }
             var showPlaces by rememberSaveable { mutableStateOf(false) }
             var showReminders by rememberSaveable { mutableStateOf(false) }
+            var showCategories by rememberSaveable { mutableStateOf(false) }
 
             val pendingNoteId by pendingOpenNoteId
             LaunchedEffect(pendingNoteId) {
@@ -518,6 +531,7 @@ class MainActivity : ComponentActivity() {
                     )
                     showTrash -> TrashScreen(model = model, onBack = { showTrash = false })
                     showRules -> RulesScreen(model = model, onBack = { showRules = false })
+                    showCategories -> CategoriesScreen(model = model, onBack = { showCategories = false })
                     showTopics -> TopicsScreen(model = model, onBack = { showTopics = false })
                     showPeople -> PeopleScreen(model = model, onBack = { showPeople = false })
                     showPlaces -> PlacesScreen(model = model, onBack = { showPlaces = false })
@@ -534,6 +548,7 @@ class MainActivity : ComponentActivity() {
                         onBack = { showSettings = false },
                         onOpenTrash = { showTrash = true },
                         onOpenRules = { showRules = true },
+                        onOpenCategories = { showCategories = true },
                         onOpenTopics = { showTopics = true },
                         onOpenPeople = { showPeople = true },
                         onOpenPlaces = { showPlaces = true },
@@ -1695,6 +1710,7 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenTrash: () -> Unit,
     onOpenRules: () -> Unit,
+    onOpenCategories: () -> Unit,
     onOpenTopics: () -> Unit,
     onOpenPeople: () -> Unit,
     onOpenPlaces: () -> Unit,
@@ -1793,6 +1809,13 @@ fun SettingsScreen(
                 Text(stringResource(R.string.rules_section_title), style = MaterialTheme.typography.titleMedium)
                 TextButton(onClick = onOpenRules, modifier = Modifier.padding(start = 0.dp)) {
                     Text(stringResource(R.string.open_rules))
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.categories_section_title), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenCategories, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_categories))
                 }
             }
 
@@ -1906,9 +1929,14 @@ fun RulesScreen(model: MainViewModel, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
 
     val rules by model.rules.collectAsStateWithLifecycle()
+    val categories by model.categories.collectAsStateWithLifecycle()
     var newKeywords by rememberSaveable { mutableStateOf("") }
-    var newCategory by rememberSaveable { mutableStateOf(DEFAULT_CATEGORIES.first()) }
+    var newCategory by rememberSaveable { mutableStateOf("") }
     var sampleText by rememberSaveable { mutableStateOf("") }
+
+    LaunchedEffect(categories) {
+        if (newCategory.isBlank() && categories.isNotEmpty()) newCategory = categories.first().name
+    }
 
     val sampleMatch = remember(rules, sampleText) {
         if (sampleText.isBlank()) {
@@ -1963,11 +1991,11 @@ fun RulesScreen(model: MainViewModel, onBack: () -> Unit) {
                     modifier = Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
-                    DEFAULT_CATEGORIES.forEach { category ->
+                    categories.forEach { category ->
                         FilterChip(
-                            selected = newCategory == category,
-                            onClick = { newCategory = category },
-                            label = { Text(category) },
+                            selected = newCategory == category.name,
+                            onClick = { newCategory = category.name },
+                            label = { Text(category.name) },
                             colors = FilterChipDefaults.filterChipColors(
                                 selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
                                 selectedLabelColor = MaterialTheme.colorScheme.onPrimaryContainer,
@@ -2050,6 +2078,19 @@ private fun RuleRow(rule: Rule, onToggle: (Boolean) -> Unit, onDelete: () -> Uni
             }
         }
     }
+}
+
+@Composable
+fun CategoriesScreen(model: MainViewModel, onBack: () -> Unit) {
+    val categories by model.categories.collectAsStateWithLifecycle()
+    VocabScreen(
+        title = stringResource(R.string.categories_title),
+        names = categories.map { it.name },
+        addHint = stringResource(R.string.add_category_hint),
+        emptyText = stringResource(R.string.categories_empty),
+        onAdd = model::addCategory,
+        onBack = onBack,
+    )
 }
 
 @Composable

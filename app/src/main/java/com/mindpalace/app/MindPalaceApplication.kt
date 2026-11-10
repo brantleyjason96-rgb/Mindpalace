@@ -5,6 +5,7 @@ import android.content.Context
 import androidx.room3.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import com.mindpalace.app.core.commands.NoteCommandHandler
+import com.mindpalace.app.core.db.MIGRATION_1_2
 import com.mindpalace.app.core.db.MindPalaceDatabase
 import com.mindpalace.app.core.reminders.NotificationHelper
 import com.mindpalace.app.export.NoteExporter
@@ -26,6 +27,7 @@ class AppContainer(context: Context) {
         MindPalaceDatabase.NAME,
     )
         .setDriver(BundledSQLiteDriver())
+        .addMigrations(MIGRATION_1_2)
         .build()
 
     val noteDao: com.mindpalace.app.core.db.NoteDao

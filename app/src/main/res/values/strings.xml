@@ -99,6 +99,13 @@
     <string name="photo_save">Save note</string>
     <string name="photo_saved_snackbar">Photo note saved to Inbox</string>
 
+    <!-- Categories -->
+    <string name="categories_section_title">Categories</string>
+    <string name="open_categories">Open Categories</string>
+    <string name="categories_title">Categories</string>
+    <string name="categories_empty">No categories yet.</string>
+    <string name="add_category_hint">New category name</string>
+
     <!-- Topics / People / Places vocab -->
     <string name="vocab_section_title">Vocabulary</string>
     <string name="open_topics">Open Topics</string>

@@ -50,6 +50,28 @@ data class DerivedEntity(
     val createdAt: Long,
 )
 
+/**
+ * User-editable category vocabulary (D20) — the six defaults (plan §2: "not yet confirmed; use
+ * these and make them editable") plus whatever the user adds in Settings. `name` is the primary
+ * key since categories are simple unique labels; no separate id needed. Append-only for now, same
+ * reasoning as topics/people/places (D18): nothing safely renames/removes a category already
+ * referenced by a rule action or a derived CATEGORY fact without a cascade story this doesn't
+ * need yet.
+ */
+@Entity(tableName = "categories")
+data class CategoryEntity(
+    @PrimaryKey
+    @ColumnInfo(name = "name")
+    val name: String,
+
+    /** Display order; new categories append at the end. */
+    @ColumnInfo(name = "position")
+    val position: Int,
+
+    @ColumnInfo(name = "created_at")
+    val createdAt: Long,
+)
+
 /** Controlled vocabulary for topics (§6). AI must choose from this vocabulary first (§8 Tier B). */
 @Entity(tableName = "topics")
 data class TopicEntity(
