@@ -90,6 +90,32 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D21 — Visual/motion polish pass: custom icons, tinted shadows, haptics, screen transitions
+Nov 9, 2026. No new dependency: `core/ui/CaptureIcons.kt` hand-draws the mic/camera glyphs via
+Canvas (emoji don't tint to the theme or render consistently across devices/dark-mode), and
+`core/ui/Buttons.kt` holds a shared `rememberPressScale()` + `CircleIconButton` used everywhere a
+tactile circular icon button is needed. Cards and list rows across the app (NoteCard, Rule/Vocab/
+Link/Reminder rows) got a brand-tinted `Modifier.shadow` (ambient/spot = `colorScheme.primary`)
+instead of flat default-black elevation. Voice capture's mic button now draws live concentric
+rings driven by `onRmsChanged` (real mic level, not a fake loop) plus an ambient idle pulse.
+Top-level navigation (`MainActivity`) now computes a sealed `AppScreen` and renders it through one
+`AnimatedContent` (slide+fade) instead of an instant `when`-swap Surface — note the content lambda
+must branch on the captured `target` parameter, not live mutable booleans, or the outgoing slot
+re-renders as the new screen mid-transition instead of animating out.
+
+Haptics: every new interactive moment (mic/camera tap, filter chips, rule toggle, add/remove,
+reminder done/cancel, link select, restore) calls `performHapticFeedback`. Initially used the
+newer semantic constants (`Confirm`, `Reject`, `ToggleOn/Off`, `SegmentTick`) per their Compose
+intent, but switched everything to `HapticFeedbackType.LongPress` after on-device testing (Samsung
+S26 Ultra/One UI) found the newer constants produced no felt vibration while `LongPress` (already
+used by the pre-existing swipe gesture) reliably does — One UI's haptic composer appears to only
+implement motor patterns for a subset of the standard Android constants. `LongPress` is the one
+proven to work on the actual owner device, so it's now the single haptic language app-wide.
+
+Composer fix: the mic/camera buttons now hide whenever either field is focused (`!expanded`), not
+only once there's text (`!canSave` previously) — they were staying visible while the keyboard was
+open with empty fields, cluttering the one moment the user is clearly mid-type.
+
 ## D20 — Editable categories: new `categories` table, schema v1 → v2
 Nov 9, 2026. Closes the last gap in the original screen backlog's Settings item ("editable
 categories (6 defaults in DEFAULT_CATEGORIES)"). New `categories` table (name TEXT PRIMARY KEY,

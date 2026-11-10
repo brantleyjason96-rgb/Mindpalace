@@ -25,9 +25,11 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateContentSize
 import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.Spring
@@ -42,6 +44,10 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.scaleOut
 import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -62,6 +68,7 @@ import androidx.compose.foundation.layout.imePadding
 import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
@@ -81,6 +88,7 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Scaffold
@@ -94,6 +102,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -101,7 +110,9 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.scale
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.graphicsLayer
@@ -171,6 +182,10 @@ import com.mindpalace.app.core.rules.RuleMatcher
 import com.mindpalace.app.core.rules.toEntity
 import com.mindpalace.app.core.rules.toRule
 import com.mindpalace.app.export.NoteExporter
+import com.mindpalace.app.ui.CameraIcon
+import com.mindpalace.app.ui.CircleIconButton
+import com.mindpalace.app.ui.MicIcon
+import com.mindpalace.app.ui.rememberPressScale
 import com.mindpalace.app.ui.theme.MindPalaceTheme
 import com.mindpalace.app.ui.theme.ThemeMode
 import com.mindpalace.app.ui.theme.ThemePrefs
@@ -472,6 +487,24 @@ class MainViewModel(
     }
 }
 
+/** Every top-level destination this Activity can show, used only to drive [AnimatedContent]'s
+ *  screen-transition slide/fade — a plain `when` over mutable booleans would re-render the
+ *  "outgoing" slot as the new screen mid-transition instead of animating it out (D21 polish). */
+private sealed interface AppScreen {
+    data object Main : AppScreen
+    data object VoiceCapture : AppScreen
+    data object PhotoCapture : AppScreen
+    data object Trash : AppScreen
+    data object Rules : AppScreen
+    data object Categories : AppScreen
+    data object Topics : AppScreen
+    data object People : AppScreen
+    data object Places : AppScreen
+    data object Reminders : AppScreen
+    data object Settings : AppScreen
+    data class NoteDetail(val noteId: String) : AppScreen
+}
+
 class MainActivity : ComponentActivity() {
 
     private val container: AppContainer
@@ -516,62 +549,86 @@ class MainActivity : ComponentActivity() {
                 }
             }
 
+            val currentOpenId = openNoteId
+            val screen: AppScreen = when {
+                showVoiceCapture -> AppScreen.VoiceCapture
+                showPhotoCapture -> AppScreen.PhotoCapture
+                showTrash -> AppScreen.Trash
+                showRules -> AppScreen.Rules
+                showCategories -> AppScreen.Categories
+                showTopics -> AppScreen.Topics
+                showPeople -> AppScreen.People
+                showPlaces -> AppScreen.Places
+                showReminders -> AppScreen.Reminders
+                showSettings -> AppScreen.Settings
+                currentOpenId != null -> AppScreen.NoteDetail(currentOpenId)
+                else -> AppScreen.Main
+            }
+
             MindPalaceTheme(darkTheme = darkTheme) {
-                val currentOpenId = openNoteId
-                when {
-                    showVoiceCapture -> VoiceCaptureScreen(
-                        model = model,
-                        onBack = { showVoiceCapture = false },
-                        onSaved = { showVoiceCapture = false },
-                    )
-                    showPhotoCapture -> PhotoCaptureScreen(
-                        model = model,
-                        onBack = { showPhotoCapture = false },
-                        onSaved = { showPhotoCapture = false },
-                    )
-                    showTrash -> TrashScreen(model = model, onBack = { showTrash = false })
-                    showRules -> RulesScreen(model = model, onBack = { showRules = false })
-                    showCategories -> CategoriesScreen(model = model, onBack = { showCategories = false })
-                    showTopics -> TopicsScreen(model = model, onBack = { showTopics = false })
-                    showPeople -> PeopleScreen(model = model, onBack = { showPeople = false })
-                    showPlaces -> PlacesScreen(model = model, onBack = { showPlaces = false })
-                    showReminders -> RemindersScreen(
-                        model = model,
-                        onBack = { showReminders = false },
-                        onOpenNote = {
-                            showReminders = false
-                            openNoteId = it
-                        },
-                    )
-                    showSettings -> SettingsScreen(
-                        model = model,
-                        onBack = { showSettings = false },
-                        onOpenTrash = { showTrash = true },
-                        onOpenRules = { showRules = true },
-                        onOpenCategories = { showCategories = true },
-                        onOpenTopics = { showTopics = true },
-                        onOpenPeople = { showPeople = true },
-                        onOpenPlaces = { showPlaces = true },
-                        onOpenReminders = { showReminders = true },
-                    )
-                    currentOpenId != null -> NoteDetailScreen(
-                        model = model,
-                        noteId = currentOpenId,
-                        onBack = { openNoteId = null },
-                        onOpenNote = { openNoteId = it },
-                    )
-                    else -> MainScreen(
-                        model = model,
-                        themeMode = themeMode,
-                        onThemeModeChange = { mode ->
-                            themeMode = mode
-                            ThemePrefs.save(this, mode)
-                        },
-                        onOpenNote = { openNoteId = it },
-                        onOpenSettings = { showSettings = true },
-                        onOpenVoiceCapture = { showVoiceCapture = true },
-                        onOpenPhotoCapture = { showPhotoCapture = true },
-                    )
+                AnimatedContent(
+                    targetState = screen,
+                    transitionSpec = {
+                        (fadeIn(tween(220)) + slideInHorizontally(tween(220)) { it / 10 })
+                            .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(140)) { -it / 10 })
+                    },
+                    label = "screenNav",
+                ) { target ->
+                    when (target) {
+                        AppScreen.VoiceCapture -> VoiceCaptureScreen(
+                            model = model,
+                            onBack = { showVoiceCapture = false },
+                            onSaved = { showVoiceCapture = false },
+                        )
+                        AppScreen.PhotoCapture -> PhotoCaptureScreen(
+                            model = model,
+                            onBack = { showPhotoCapture = false },
+                            onSaved = { showPhotoCapture = false },
+                        )
+                        AppScreen.Trash -> TrashScreen(model = model, onBack = { showTrash = false })
+                        AppScreen.Rules -> RulesScreen(model = model, onBack = { showRules = false })
+                        AppScreen.Categories -> CategoriesScreen(model = model, onBack = { showCategories = false })
+                        AppScreen.Topics -> TopicsScreen(model = model, onBack = { showTopics = false })
+                        AppScreen.People -> PeopleScreen(model = model, onBack = { showPeople = false })
+                        AppScreen.Places -> PlacesScreen(model = model, onBack = { showPlaces = false })
+                        AppScreen.Reminders -> RemindersScreen(
+                            model = model,
+                            onBack = { showReminders = false },
+                            onOpenNote = {
+                                showReminders = false
+                                openNoteId = it
+                            },
+                        )
+                        AppScreen.Settings -> SettingsScreen(
+                            model = model,
+                            onBack = { showSettings = false },
+                            onOpenTrash = { showTrash = true },
+                            onOpenRules = { showRules = true },
+                            onOpenCategories = { showCategories = true },
+                            onOpenTopics = { showTopics = true },
+                            onOpenPeople = { showPeople = true },
+                            onOpenPlaces = { showPlaces = true },
+                            onOpenReminders = { showReminders = true },
+                        )
+                        is AppScreen.NoteDetail -> NoteDetailScreen(
+                            model = model,
+                            noteId = target.noteId,
+                            onBack = { openNoteId = null },
+                            onOpenNote = { openNoteId = it },
+                        )
+                        AppScreen.Main -> MainScreen(
+                            model = model,
+                            themeMode = themeMode,
+                            onThemeModeChange = { mode ->
+                                themeMode = mode
+                                ThemePrefs.save(this@MainActivity, mode)
+                            },
+                            onOpenNote = { openNoteId = it },
+                            onOpenSettings = { showSettings = true },
+                            onOpenVoiceCapture = { showVoiceCapture = true },
+                            onOpenPhotoCapture = { showPhotoCapture = true },
+                        )
+                    }
                 }
             }
         }
@@ -779,6 +836,7 @@ private fun StatusFilterRow(
         NoteStatus.DONE to stringResource(R.string.status_done),
         NoteStatus.ARCHIVED to stringResource(R.string.status_archived),
     )
+    val haptics = LocalHapticFeedback.current
     Row(
         modifier = modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -786,7 +844,10 @@ private fun StatusFilterRow(
         options.forEach { (status, label) ->
             FilterChip(
                 selected = selected == status,
-                onClick = { onSelect(status) },
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onSelect(status)
+                },
                 label = { Text(label) },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -1069,11 +1130,18 @@ private fun NoteCard(
         }
     }
 
+    val cardShape = RoundedCornerShape(24.dp)
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .scale(scale.value),
-        shape = RoundedCornerShape(24.dp),
+            .scale(scale.value)
+            .shadow(
+                elevation = 3.dp,
+                shape = cardShape,
+                ambientColor = MaterialTheme.colorScheme.primary,
+                spotColor = MaterialTheme.colorScheme.primary,
+            ),
+        shape = cardShape,
         colors = CardDefaults.cardColors(
             containerColor = lerp(
                 MaterialTheme.colorScheme.surfaceContainerLowest,
@@ -1081,7 +1149,7 @@ private fun NoteCard(
                 tint.value,
             ),
         ),
-        elevation = CardDefaults.cardElevation(defaultElevation = 1.dp),
+        elevation = CardDefaults.cardElevation(defaultElevation = 0.dp),
     ) {
         Column(
             Modifier
@@ -1185,13 +1253,19 @@ private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () 
         unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent,
     )
 
+    val composerShape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp)
     Surface(
         modifier = Modifier
             .fillMaxWidth()
+            .shadow(
+                elevation = 16.dp,
+                shape = composerShape,
+                ambientColor = MaterialTheme.colorScheme.primary,
+                spotColor = MaterialTheme.colorScheme.primary,
+            )
             .navigationBarsPadding(),
         color = MaterialTheme.colorScheme.surfaceContainerLow,
-        shadowElevation = 8.dp,
-        shape = RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp),
+        shape = composerShape,
     ) {
         Column(
             Modifier
@@ -1230,36 +1304,26 @@ private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () 
                     colors = fieldColors,
                 )
                 AnimatedVisibility(
-                    visible = !canSave,
+                    visible = !expanded,
                     enter = fadeIn() + scaleIn(),
                     exit = fadeOut() + scaleOut(),
                 ) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        val voiceLabel = stringResource(R.string.voice_mic_button)
-                        Surface(
+                        CircleIconButton(
                             onClick = onVoice,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .semantics { contentDescription = voiceLabel },
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.primaryContainer,
+                            contentDescription = stringResource(R.string.voice_mic_button),
+                            containerColor = MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
                         ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                Text("🎙", style = MaterialTheme.typography.titleLarge)
-                            }
+                            MicIcon()
                         }
-                        val photoLabel = stringResource(R.string.photo_camera_button)
-                        Surface(
+                        CircleIconButton(
                             onClick = onPhoto,
-                            modifier = Modifier
-                                .size(56.dp)
-                                .semantics { contentDescription = photoLabel },
-                            shape = CircleShape,
-                            color = MaterialTheme.colorScheme.secondaryContainer,
+                            contentDescription = stringResource(R.string.photo_camera_button),
+                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
+                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
                         ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                Text("📷", style = MaterialTheme.typography.titleLarge)
-                            }
+                            CameraIcon()
                         }
                     }
                 }
@@ -1415,6 +1479,7 @@ private fun NoteLinksSection(
     var linkQuery by rememberSaveable(note.id) { mutableStateOf("") }
 
     val linkedIds = remember(links) { links.map { if (it.fromId == note.id) it.toId else it.fromId }.toSet() }
+    val haptics = LocalHapticFeedback.current
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.links_section_title), style = MaterialTheme.typography.titleMedium)
@@ -1431,10 +1496,13 @@ private fun NoteLinksSection(
                 val other = allNotes.find { it.id == otherId } ?: return@forEach
                 val label = other.title ?: other.rawText ?: other.transcript ?: other.ocrText
                     ?: stringResource(R.string.untitled)
+                val linkRowShape = RoundedCornerShape(16.dp)
                 Surface(
                     onClick = { onOpenNote(otherId) },
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(elevation = 2.dp, shape = linkRowShape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
+                    shape = linkRowShape,
                     color = MaterialTheme.colorScheme.surfaceContainerLowest,
                 ) {
                     Text(
@@ -1479,6 +1547,7 @@ private fun NoteLinksSection(
                     ?: stringResource(R.string.untitled)
                 Surface(
                     onClick = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                         model.addLink(note.id, candidate.id)
                         addingLink = false
                         linkQuery = ""
@@ -1539,6 +1608,7 @@ private fun ReminderSection(model: MainViewModel, noteId: String) {
     }
 
     val dateFormat = remember { java.text.SimpleDateFormat("EEE, MMM d, h:mm a", java.util.Locale.getDefault()) }
+    val haptics = LocalHapticFeedback.current
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.reminders_section_title), style = MaterialTheme.typography.titleMedium)
@@ -1552,9 +1622,12 @@ private fun ReminderSection(model: MainViewModel, noteId: String) {
         } else {
             active.forEach { reminder ->
                 val atMillis = reminder.scheduledAtMillis()
+                val rowShape = RoundedCornerShape(16.dp)
                 Surface(
-                    modifier = Modifier.fillMaxWidth(),
-                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .shadow(elevation = 2.dp, shape = rowShape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
+                    shape = rowShape,
                     color = MaterialTheme.colorScheme.surfaceContainerLowest,
                 ) {
                     Row(
@@ -1566,10 +1639,20 @@ private fun ReminderSection(model: MainViewModel, noteId: String) {
                             style = MaterialTheme.typography.bodyMedium,
                             modifier = Modifier.weight(1f),
                         )
-                        TextButton(onClick = { model.completeReminder(context, reminder) }) {
+                        TextButton(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                model.completeReminder(context, reminder)
+                            },
+                        ) {
                             Text(stringResource(R.string.reminder_mark_done))
                         }
-                        TextButton(onClick = { model.cancelReminder(context, reminder) }) {
+                        TextButton(
+                            onClick = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                model.cancelReminder(context, reminder)
+                            },
+                        ) {
                             Text(stringResource(R.string.reminder_cancel), color = MaterialTheme.colorScheme.error)
                         }
                     }
@@ -1671,6 +1754,7 @@ private fun StatusPickerRow(selected: NoteStatus, onSelect: (NoteStatus) -> Unit
         NoteStatus.DONE to stringResource(R.string.status_done),
         NoteStatus.ARCHIVED to stringResource(R.string.status_archived),
     )
+    val haptics = LocalHapticFeedback.current
     Row(
         modifier = modifier.horizontalScroll(rememberScrollState()),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -1678,7 +1762,10 @@ private fun StatusPickerRow(selected: NoteStatus, onSelect: (NoteStatus) -> Unit
         options.forEach { (status, label) ->
             FilterChip(
                 selected = selected == status,
-                onClick = { onSelect(status) },
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onSelect(status)
+                },
                 label = { Text(label) },
                 colors = FilterChipDefaults.filterChipColors(
                     selectedContainerColor = MaterialTheme.colorScheme.primaryContainer,
@@ -1862,6 +1949,7 @@ fun TrashScreen(model: MainViewModel, onBack: () -> Unit) {
     val snackbarHost = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val restoredMsg = stringResource(R.string.restored_snackbar)
+    val haptics = LocalHapticFeedback.current
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -1905,6 +1993,7 @@ fun TrashScreen(model: MainViewModel, onBack: () -> Unit) {
                             NoteCard(note, expanded = false, onOpen = {})
                             TextButton(
                                 onClick = {
+                                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                                     model.restore(note.id)
                                     scope.launch { snackbarHost.showSnackbar(restoredMsg) }
                                 },
@@ -2011,16 +2100,21 @@ fun RulesScreen(model: MainViewModel, onBack: () -> Unit) {
                     singleLine = true,
                     shape = RoundedCornerShape(20.dp),
                 )
+                val (addRuleSource, addRuleScale) = rememberPressScale()
+                val addRuleHaptics = LocalHapticFeedback.current
                 Button(
                     onClick = {
                         val keywords = newKeywords.split(",").map { it.trim() }.filter { it.isNotBlank() }
                         if (keywords.isNotEmpty()) {
+                            addRuleHaptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             model.addRule(keywords, newCategory)
                             newKeywords = ""
                         }
                     },
+                    modifier = addRuleScale,
                     enabled = newKeywords.isNotBlank(),
                     shape = RoundedCornerShape(20.dp),
+                    interactionSource = addRuleSource,
                 ) {
                     Text(stringResource(R.string.add_rule))
                 }
@@ -2056,9 +2150,13 @@ fun RulesScreen(model: MainViewModel, onBack: () -> Unit) {
 
 @Composable
 private fun RuleRow(rule: Rule, onToggle: (Boolean) -> Unit, onDelete: () -> Unit) {
+    val haptics = LocalHapticFeedback.current
+    val rowShape = RoundedCornerShape(20.dp)
     Card(
-        modifier = Modifier.fillMaxWidth(),
-        shape = RoundedCornerShape(20.dp),
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(elevation = 2.dp, shape = rowShape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
+        shape = rowShape,
         colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
     ) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2071,9 +2169,21 @@ private fun RuleRow(rule: Rule, onToggle: (Boolean) -> Unit, onDelete: () -> Uni
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                androidx.compose.material3.Switch(checked = rule.enabled, onCheckedChange = onToggle)
+                androidx.compose.material3.Switch(
+                    checked = rule.enabled,
+                    onCheckedChange = {
+                        haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onToggle(it)
+                    },
+                )
             }
-            TextButton(onClick = onDelete, modifier = Modifier.padding(top = 0.dp)) {
+            TextButton(
+                onClick = {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    onDelete()
+                },
+                modifier = Modifier.padding(top = 0.dp),
+            ) {
                 Text(stringResource(R.string.rule_delete))
             }
         }
@@ -2149,6 +2259,7 @@ private fun VocabScreen(
 ) {
     BackHandler(onBack = onBack)
     var newName by rememberSaveable { mutableStateOf("") }
+    val haptics = LocalHapticFeedback.current
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -2177,16 +2288,20 @@ private fun VocabScreen(
                     singleLine = true,
                     shape = RoundedCornerShape(20.dp),
                 )
+                val (addSource, addScale) = rememberPressScale()
                 Button(
                     onClick = {
                         val trimmed = newName.trim()
                         if (trimmed.isNotBlank()) {
+                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                             onAdd(trimmed)
                             newName = ""
                         }
                     },
+                    modifier = addScale,
                     enabled = newName.isNotBlank(),
                     shape = RoundedCornerShape(20.dp),
+                    interactionSource = addSource,
                 ) {
                     Text(stringResource(R.string.add))
                 }
@@ -2201,9 +2316,17 @@ private fun VocabScreen(
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     names.forEach { name ->
+                        val rowShape = RoundedCornerShape(16.dp)
                         Surface(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(16.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .shadow(
+                                    elevation = 2.dp,
+                                    shape = rowShape,
+                                    ambientColor = MaterialTheme.colorScheme.primary,
+                                    spotColor = MaterialTheme.colorScheme.primary,
+                                ),
+                            shape = rowShape,
                             color = MaterialTheme.colorScheme.surfaceContainerLowest,
                         ) {
                             Text(
@@ -2246,6 +2369,7 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
     var transcript by rememberSaveable { mutableStateOf("") }
     var partial by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
+    var micLevel by remember { mutableFloatStateOf(0f) }
 
     val permissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission(),
@@ -2272,16 +2396,20 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
         r.setRecognitionListener(object : RecognitionListener {
             override fun onReadyForSpeech(params: Bundle?) {}
             override fun onBeginningOfSpeech() {}
-            override fun onRmsChanged(rmsdB: Float) {}
+            override fun onRmsChanged(rmsdB: Float) {
+                micLevel = (rmsdB / 10f).coerceIn(0f, 1f)
+            }
             override fun onBufferReceived(buffer: ByteArray?) {}
             override fun onEndOfSpeech() {}
             override fun onError(error: Int) {
                 listening = false
                 partial = ""
+                micLevel = 0f
                 scope.launch { snackbarHost.showSnackbar(context.getString(R.string.voice_error)) }
             }
             override fun onResults(results: Bundle?) {
                 listening = false
+                micLevel = 0f
                 val heard = results
                     ?.getStringArrayList(SpeechRecognizer.RESULTS_RECOGNITION)
                     ?.firstOrNull()
@@ -2312,6 +2440,7 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
     fun stopListening() {
         recognizer?.stopListening()
         listening = false
+        micLevel = 0f
     }
 
     val savedMsg = stringResource(R.string.voice_saved_snackbar)
@@ -2356,31 +2485,57 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
+                    val (grantSource, grantScale) = rememberPressScale()
                     Button(
                         onClick = { permissionLauncher.launch(android.Manifest.permission.RECORD_AUDIO) },
+                        modifier = grantScale,
                         shape = RoundedCornerShape(20.dp),
+                        interactionSource = grantSource,
                     ) {
                         Text(stringResource(R.string.voice_permission_grant))
                     }
                 }
                 else -> {
+                    val micColor = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary
+                    val ambientPulse by rememberInfiniteTransition(label = "micAmbient").animateFloat(
+                        initialValue = 0f,
+                        targetValue = 1f,
+                        animationSpec = infiniteRepeatable(tween(1100, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                        label = "micAmbientPulse",
+                    )
+                    val ringLevel by animateFloatAsState(
+                        targetValue = if (listening) maxOf(micLevel, ambientPulse * 0.3f) else 0f,
+                        animationSpec = tween(150),
+                        label = "micRingLevel",
+                    )
                     Box(
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(180.dp),
                         contentAlignment = Alignment.Center,
                     ) {
-                        Surface(
-                            onClick = { if (listening) stopListening() else startListening() },
-                            modifier = Modifier.size(96.dp),
-                            shape = CircleShape,
-                            color = if (listening) {
-                                MaterialTheme.colorScheme.error
-                            } else {
-                                MaterialTheme.colorScheme.primaryContainer
-                            },
-                        ) {
-                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
-                                Text("🎙", style = MaterialTheme.typography.displaySmall)
+                        Canvas(modifier = Modifier.size(180.dp)) {
+                            if (listening) {
+                                val baseRadius = size.minDimension / 2f * 0.33f
+                                val maxExtra = size.minDimension / 2f * 0.67f
+                                for (ring in 1..2) {
+                                    val t = (ringLevel * ring / 2f).coerceIn(0f, 1f)
+                                    drawCircle(
+                                        color = micColor.copy(alpha = (0.28f - ring * 0.08f) * (0.5f + ringLevel)),
+                                        radius = baseRadius + maxExtra * t,
+                                    )
+                                }
                             }
+                        }
+                        CircleIconButton(
+                            onClick = { if (listening) stopListening() else startListening() },
+                            contentDescription = stringResource(R.string.voice_mic_button),
+                            containerColor = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primaryContainer,
+                            contentColor = if (listening) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimaryContainer,
+                            size = 96.dp,
+                            hapticType = HapticFeedbackType.LongPress,
+                        ) {
+                            MicIcon(modifier = Modifier.size(40.dp))
                         }
                     }
                     Text(
@@ -2400,6 +2555,7 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                             MaterialTheme.colorScheme.onSurface
                         },
                     )
+                    val (saveSource, saveScale) = rememberPressScale()
                     Button(
                         onClick = {
                             saving = true
@@ -2408,8 +2564,10 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                                 onSaved()
                             }
                         },
+                        modifier = saveScale,
                         enabled = transcript.isNotBlank() && !saving,
                         shape = RoundedCornerShape(20.dp),
+                        interactionSource = saveSource,
                     ) {
                         Text(stringResource(R.string.voice_save))
                     }
@@ -2514,26 +2672,62 @@ fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
-                    Button(onClick = ::launchCamera, shape = RoundedCornerShape(20.dp)) {
-                        Text(stringResource(R.string.photo_take))
-                    }
+                    val (takeSource, takeScale) = rememberPressScale()
                     Button(
+                        onClick = ::launchCamera,
+                        modifier = takeScale.fillMaxWidth(),
+                        shape = RoundedCornerShape(20.dp),
+                        interactionSource = takeSource,
+                    ) {
+                        CameraIcon(modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                        Spacer(Modifier.width(10.dp))
+                        Text(stringResource(R.string.photo_take), fontWeight = FontWeight.SemiBold)
+                    }
+                    val (galleryInteractionSource, galleryScale) = rememberPressScale()
+                    OutlinedButton(
                         onClick = {
                             pickMediaLauncher.launch(
                                 PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
                             )
                         },
+                        modifier = galleryScale.fillMaxWidth(),
                         shape = RoundedCornerShape(20.dp),
+                        interactionSource = galleryInteractionSource,
                     ) {
                         Text(stringResource(R.string.photo_choose_gallery))
                     }
                 }
                 recognizing -> {
-                    CircularProgressIndicator()
+                    val pulse by rememberInfiniteTransition(label = "ocrPulse").animateFloat(
+                        initialValue = 0.9f,
+                        targetValue = 1.08f,
+                        animationSpec = infiniteRepeatable(tween(700, easing = FastOutSlowInEasing), RepeatMode.Reverse),
+                        label = "ocrPulseScale",
+                    )
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 24.dp),
+                        contentAlignment = Alignment.Center,
+                    ) {
+                        Surface(
+                            modifier = Modifier
+                                .size(64.dp)
+                                .scale(pulse),
+                            shape = CircleShape,
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                        ) {
+                            Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
+                                CameraIcon(tint = MaterialTheme.colorScheme.onPrimaryContainer)
+                            }
+                        }
+                    }
                     Text(
                         stringResource(R.string.photo_reading),
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.fillMaxWidth(),
+                        textAlign = TextAlign.Center,
                     )
                 }
                 else -> {
@@ -2541,12 +2735,20 @@ fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         BitmapFactory.decodeFile(file.path)?.asImageBitmap()
                     }
                     if (bitmap != null) {
+                        val frameShape = RoundedCornerShape(20.dp)
                         Image(
                             bitmap = bitmap,
                             contentDescription = null,
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .height(220.dp),
+                                .height(220.dp)
+                                .shadow(
+                                    elevation = 10.dp,
+                                    shape = frameShape,
+                                    ambientColor = MaterialTheme.colorScheme.primary,
+                                    spotColor = MaterialTheme.colorScheme.primary,
+                                )
+                                .clip(frameShape),
                             contentScale = ContentScale.Crop,
                         )
                     }
@@ -2559,6 +2761,7 @@ fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         maxLines = 10,
                         shape = RoundedCornerShape(20.dp),
                     )
+                    val (photoSaveSource, photoSaveScale) = rememberPressScale()
                     Button(
                         onClick = {
                             saving = true
@@ -2567,8 +2770,10 @@ fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                                 onSaved()
                             }
                         },
+                        modifier = photoSaveScale,
                         enabled = !saving,
                         shape = RoundedCornerShape(20.dp),
+                        interactionSource = photoSaveSource,
                     ) {
                         Text(stringResource(R.string.photo_save))
                     }
@@ -2588,6 +2793,7 @@ fun RemindersScreen(model: MainViewModel, onBack: () -> Unit, onOpenNote: (Strin
     val reminders by model.activeReminders.collectAsStateWithLifecycle()
     val allNotes by model.allNotes.collectAsStateWithLifecycle()
     val dateFormat = remember { java.text.SimpleDateFormat("EEE, MMM d, h:mm a", java.util.Locale.getDefault()) }
+    val haptics = LocalHapticFeedback.current
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -2620,9 +2826,12 @@ fun RemindersScreen(model: MainViewModel, onBack: () -> Unit, onOpenNote: (Strin
                         val label = note?.title ?: note?.rawText ?: note?.transcript ?: note?.ocrText
                             ?: stringResource(R.string.untitled)
                         val atMillis = reminder.scheduledAtMillis()
+                        val cardShape = RoundedCornerShape(20.dp)
                         Card(
-                            modifier = Modifier.fillMaxWidth(),
-                            shape = RoundedCornerShape(20.dp),
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .shadow(elevation = 3.dp, shape = cardShape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
+                            shape = cardShape,
                             colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
                         ) {
                             Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -2643,10 +2852,20 @@ fun RemindersScreen(model: MainViewModel, onBack: () -> Unit, onOpenNote: (Strin
                                     )
                                 }
                                 Row {
-                                    TextButton(onClick = { model.completeReminder(context, reminder) }) {
+                                    TextButton(
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            model.completeReminder(context, reminder)
+                                        },
+                                    ) {
                                         Text(stringResource(R.string.reminder_mark_done))
                                     }
-                                    TextButton(onClick = { model.cancelReminder(context, reminder) }) {
+                                    TextButton(
+                                        onClick = {
+                                            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                            model.cancelReminder(context, reminder)
+                                        },
+                                    ) {
                                         Text(stringResource(R.string.reminder_cancel), color = MaterialTheme.colorScheme.error)
                                     }
                                 }
