@@ -8,6 +8,8 @@
     <string name="search_hint">Search your notes</string>
     <string name="saved_indicator">Saved (rev %1$d)</string>
     <string name="saved_toast">Saved to Mind Palace Inbox</string>
+    <string name="share_empty_toast">Nothing to save</string>
+    <string name="share_save_failed_toast">Could not save — copy your text and try again</string>
 
     <!-- Bottom-tab shell (design pass matching the Stitch mockup) -->
     <string name="tab_capture">Capture</string>

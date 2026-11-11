@@ -340,6 +340,33 @@ class NoteCommandHandlerTest {
         assertEquals("x.pdf", db.noteDao().byId(note.id)?.attachmentFileName)
     }
 
+    // ------------------------------------------------------------------------- plan 01 step 1a
+
+    @Test
+    fun `soft delete twice is idempotent`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        clock = 11_000
+        handler.softDelete(note.id)
+        clock = 12_000
+        handler.softDelete(note.id) // must not throw
+
+        assertEquals(2, db.auditDao().count())
+        assertNotNull(db.noteDao().byId(note.id)?.deletedAt)
+    }
+
+    @Test
+    fun `snapshot carries image and attachment paths`() = runTest {
+        handler.create(
+            CreateNoteRequest(
+                source = NoteSource.ATTACHMENT,
+                attachmentPath = "/data/attachments/x.pdf",
+                attachmentFileName = "x.pdf",
+            ),
+        )
+        val audit = db.auditDao().recentFor("note", db.noteDao().activeNotes().single().id, 1).single()
+        assertTrue(audit.after!!.contains("x.pdf"))
+    }
+
     // ------------------------------------------------------------------ plan 02 §3.1 (untagged)
 
     @Test

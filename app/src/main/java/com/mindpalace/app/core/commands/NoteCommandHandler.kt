@@ -130,9 +130,14 @@ class NoteCommandHandler(
         doStatus(noteId, newStatus, AuditAction.SET_STATUS, actor)
     }
 
-    /** Soft delete only (§3.2) — row + full history stay on disk; [restore] brings it back. */
+    /**
+     * Soft delete only (§3.2) — row + full history stay on disk; [restore] brings it back.
+     * Idempotent: deleting an already-deleted note is a no-op, not an error (plan 01 H2) — a
+     * lost race against a concurrent change is the only case that throws.
+     */
     suspend fun softDelete(noteId: String, actor: AuditActor = AuditActor.USER) {
         val current = requireExisting(noteId, includeDeleted = true)
+        if (current.deletedAt != null) return
         val at = now()
         val applied = database.withWriteTransaction {
             val rows = database.noteDao().softDeleteGuarded(noteId, at, current.revision)
@@ -154,9 +159,7 @@ class NoteCommandHandler(
             }
             rows
         }
-        if (applied != 1) {
-            throw if (current.deletedAt != null) NoteConflictException(noteId) else NoteMissingException(noteId)
-        }
+        if (applied != 1) throw NoteConflictException(noteId)
     }
 
     /** Un-deletes a soft-deleted note. */
@@ -383,5 +386,8 @@ class NoteCommandHandler(
         sourceUrl = sourceUrl,
         sourceApp = sourceApp,
         deletedAt = deletedAt,
+        imagePath = imagePath,
+        attachmentPath = attachmentPath,
+        attachmentFileName = attachmentFileName,
     )
 }

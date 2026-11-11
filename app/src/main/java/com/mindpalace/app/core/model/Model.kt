@@ -85,7 +85,11 @@ const val CATEGORY_INBOX = "Inbox"
 /** The one entity type the audit trail knows in v1. */
 const val AUDIT_ENTITY_NOTE = "note"
 
-/** Audited field snapshot of a note row (§6 audit.before/after). Stored as JSON text. */
+/**
+ * Audited field snapshot of a note row (§6 audit.before/after). Stored as JSON text.
+ * imagePath/attachmentPath/attachmentFileName added in plan 01 H1/H2 — new fields default to
+ * null so older persisted JSON (written before this change) still decodes.
+ */
 @Serializable
 data class NoteSnapshot(
     val id: String,
@@ -98,4 +102,7 @@ data class NoteSnapshot(
     val sourceUrl: String? = null,
     val sourceApp: String? = null,
     val deletedAt: Long? = null,
+    val imagePath: String? = null,
+    val attachmentPath: String? = null,
+    val attachmentFileName: String? = null,
 )

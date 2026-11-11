@@ -48,13 +48,37 @@ class ShareIngestTest {
     }
 
     @Test
-    fun `text with spaces matching a link prefix is NOT treated as a link`() {
+    fun `text with spaces matching a link prefix is NOT link-only, but its one URL is still recorded`() {
+        // Updated by plan 01 C3: a URL followed by more text is no longer treated as "the whole
+        // share IS a link" (linkOnly stays false, rawText stays the full text) — but when exactly
+        // one URL appears, it is still worth recording as source_url metadata.
         val req = ShareIngest.toRequest(
             "https://example.org read this later",
             null,
             null,
         )!!
-        assertNull(req.sourceUrl)
+        assertEquals("https://example.org", req.sourceUrl)
         assertEquals("https://example.org read this later", req.rawText)
+    }
+
+    // ------------------------------------------------------------------------- plan 01 step 1a
+
+    @Test
+    fun `url followed by a newline and text is not link-only`() {
+        val req = ShareIngest.toRequest("https://a.org\nmy notes", null, null)!!
+        assertEquals("https://a.org\nmy notes", req.rawText)
+        assertEquals("https://a.org", req.sourceUrl)
+    }
+
+    @Test
+    fun `shared text is stored untrimmed`() {
+        val req = ShareIngest.toRequest("  hi  ", null, null)!!
+        assertEquals("  hi  ", req.rawText)
+    }
+
+    @Test
+    fun `two urls set no source url`() {
+        val req = ShareIngest.toRequest("https://a.org and https://b.org", null, null)!!
+        assertNull(req.sourceUrl)
     }
 }

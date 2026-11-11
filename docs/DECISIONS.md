@@ -384,3 +384,40 @@ files-allowed list is real and should be reconciled there.
 No production code changed in this step beyond that one doc comment — test files only otherwise
 (plus this entry, `CHANGELOG.md`, and `docs/TEST_RESULTS.md`). `docs/plans/01-audit-punch-list.md`
 step 1a is next.
+
+## D28 — Plan 01 step 1a: share hardening, soft-delete idempotency, snapshot fields
+Nov 11, 2026. Executing `docs/plans/01-audit-punch-list.md`'s step 1a (C1, C3, H2, Z2.12).
+
+**C1 (styled-text shares dropped silently):** `ShareReceiverActivity` now reads
+`getCharSequenceExtra` instead of `getStringExtra` (the latter returns null for a
+`SpannableString`), wraps the save in try/catch so a database error toasts
+`share_save_failed_toast` instead of crashing, and toasts `share_empty_toast` when there's
+nothing to save — previously nothing happened at all in that case.
+
+**C3 (URL detection):** `ShareIngest.toRequest`'s "is this share just a link" check used
+`!contains(' ')`, which missed `"url\nmore text"` (no literal space, only a newline) and stored
+the WHOLE multi-line blob as `source_url`. Fixed to `none { it.isWhitespace() }`. Also added: when
+the share is not link-only but contains exactly one `https?://`/`www.` token, that token is
+recorded as `source_url` anyway (a link on its own line followed by notes is still worth it);
+two or more URLs record neither, rather than guessing. Raw text is now stored **untrimmed** — the
+old code always used the trimmed string for `rawText`, silently dropping leading/trailing
+whitespace the user may have intentionally shared.
+
+This changed the behavior one pre-existing test asserted: `"https://example.org read this later"`
+used to assert `sourceUrl == null`; it's now `"https://example.org"` under the single-URL rule
+above. Updated that test (renamed, same file) rather than leaving a contradiction — the old
+assertion encoded the exact under-detection class of bug C3 describes, not an invariant worth
+protecting.
+
+**H2 (soft-delete idempotency):** `softDelete` on an already-deleted note used to throw
+`NoteConflictException`; a genuine lost race (revision changed concurrently) threw
+`NoteMissingException`. Both were backwards. Now: already-deleted → no-op, return; a lost race
+(the guarded UPDATE affected 0 rows for a note that wasn't already deleted when read) → throws
+`NoteConflictException`.
+
+**Snapshot fields:** `NoteSnapshot` gained `imagePath`, `attachmentPath`, `attachmentFileName`
+(all defaulting to null, so audit JSON written before this change still decodes) — the audit
+trail previously had no record of which file an ATTACHMENT/PHOTO note's audit entry referred to.
+
+Verified locally: `./gradlew testDebugUnitTest` — 98 tests (was 91), 0 failures, 2 skipped (same
+two `@Ignore`d bug records, unrelated to this step). `./gradlew assembleDebug` also green.
