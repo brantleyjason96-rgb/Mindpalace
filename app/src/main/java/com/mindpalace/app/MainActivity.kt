@@ -111,6 +111,7 @@ import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
@@ -162,7 +163,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.viewModelScope
 import com.mindpalace.app.core.commands.CreateNoteRequest
+import com.mindpalace.app.core.commands.EmptyCaptureException
 import com.mindpalace.app.core.commands.NoteCommandHandler
+import com.mindpalace.app.core.commands.NoteConflictException
+import com.mindpalace.app.core.commands.NoteMissingException
 import com.mindpalace.app.core.db.CategoryDao
 import com.mindpalace.app.core.db.CategoryEntity
 import com.mindpalace.app.core.db.FtsQuery
@@ -237,9 +241,12 @@ import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
 import kotlinx.coroutines.flow.map
@@ -249,6 +256,23 @@ import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
+
+/** A command failure the UI should show, not crash on (plan 01 X1). */
+sealed interface UiError {
+    data class Conflict(val noteId: String) : UiError
+    data class Missing(val noteId: String) : UiError
+    data object Empty : UiError
+    data class Unknown(val message: String?) : UiError
+}
+
+/** Distinguishes "the Flow hasn't emitted yet" from "it emitted null" (plan 01 N1) — collected
+ *  with [Loading] as the `initialValue`, so a screen only navigates away once it actually knows
+ *  the note is gone, never on the very first composition before any data has arrived. */
+sealed interface NoteLookup {
+    data object Loading : NoteLookup
+    data object Missing : NoteLookup
+    data class Found(val note: NoteEntity) : NoteLookup
+}
 
 class MainViewModel(
     database: MindPalaceDatabase,
@@ -272,10 +296,45 @@ class MainViewModel(
     private val auditDao: AuditDao = database.auditDao()
     private val derivedDao: DerivedDao = database.derivedDao()
 
+    /**
+     * Every write funnels through [launchCommand] (plan 01 X1) instead of a bare
+     * `viewModelScope.launch { ... }` — none of those used to have a try/catch, so any command
+     * exception (a stale revision, a note deleted out from under the screen, an empty capture)
+     * crashed the whole app instead of showing an error. [errors] is a hot, buffered stream the
+     * UI can collect to show a snackbar; nothing observing it yet is not a reason to drop an
+     * error silently.
+     */
+    private val _errors = MutableSharedFlow<UiError>(extraBufferCapacity = 4)
+    val errors: SharedFlow<UiError> = _errors.asSharedFlow()
+
+    private fun launchCommand(onError: (UiError) -> Unit = ::reportError, block: suspend () -> Unit) {
+        viewModelScope.launch {
+            try {
+                block()
+            } catch (e: NoteConflictException) {
+                onError(UiError.Conflict(e.noteId))
+            } catch (e: NoteMissingException) {
+                onError(UiError.Missing(e.noteId))
+            } catch (e: EmptyCaptureException) {
+                onError(UiError.Empty)
+            } catch (e: Exception) {
+                onError(UiError.Unknown(e.message))
+            }
+        }
+    }
+
+    private fun reportError(error: UiError) {
+        viewModelScope.launch { _errors.emit(error) }
+    }
+
     /** Revision history for the Thought Detail screen — newest first, same order the audit
      *  table is already queried in. */
     fun auditForNote(noteId: String): Flow<List<AuditEntity>> =
         auditDao.observeRecentFor(AUDIT_ENTITY_NOTE, noteId, limit = 50)
+
+    /** Live lookup for the Thought Detail screen (plan 01 N1) — see [NoteLookup]. */
+    fun noteLookup(noteId: String): Flow<NoteLookup> =
+        noteDao.observeById(noteId).map { if (it == null) NoteLookup.Missing else NoteLookup.Found(it) }
 
     /** Current derived facts (category/tag/person/place/topic) for the Thought Detail screen's
      *  "why was this filed here" explanation. */
@@ -292,11 +351,11 @@ class MainViewModel(
     /** Review (CLAUDE.md "AI: Proposals review") — applies through the command handler, same
      *  save-first contract as every other mutation; never writes the note directly. */
     fun approveProposal(id: String) {
-        viewModelScope.launch { commands.approveProposal(id) }
+        launchCommand { commands.approveProposal(id) }
     }
 
     fun rejectProposal(id: String) {
-        viewModelScope.launch { commands.rejectProposal(id) }
+        launchCommand { commands.rejectProposal(id) }
     }
 
     val rules: StateFlow<List<RuleEntity>> =
@@ -306,7 +365,7 @@ class MainViewModel(
         categoryDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     fun addCategory(name: String) {
-        viewModelScope.launch {
+        launchCommand {
             val position = categoryDao.maxPosition() + 1
             categoryDao.insert(CategoryEntity(name = name, position = position, createdAt = System.currentTimeMillis()))
         }
@@ -345,7 +404,7 @@ class MainViewModel(
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     fun addTopic(name: String) {
-        viewModelScope.launch {
+        launchCommand {
             topicDao.insertIfAbsent(
                 TopicEntity(id = UUID.randomUUID().toString(), name = name, createdAt = System.currentTimeMillis(), createdBy = "user"),
             )
@@ -353,7 +412,7 @@ class MainViewModel(
     }
 
     fun addPerson(name: String) {
-        viewModelScope.launch {
+        launchCommand {
             personDao.insertIfAbsent(
                 PersonEntity(id = UUID.randomUUID().toString(), name = name, createdAt = System.currentTimeMillis()),
             )
@@ -361,7 +420,7 @@ class MainViewModel(
     }
 
     fun addPlace(name: String) {
-        viewModelScope.launch {
+        launchCommand {
             placeDao.insertIfAbsent(
                 PlaceEntity(id = UUID.randomUUID().toString(), name = name, createdAt = System.currentTimeMillis()),
             )
@@ -373,7 +432,7 @@ class MainViewModel(
 
     /** User-made explicit link between two notes (§11) — confirmed immediately, no review step. */
     fun addLink(fromId: String, toId: String) {
-        viewModelScope.launch {
+        launchCommand {
             noteLinkDao.insert(
                 NoteLinkEntity(
                     fromId = fromId,
@@ -395,7 +454,7 @@ class MainViewModel(
 
     /** Creates the reminder row and schedules the exact alarm in the same call (D19). */
     fun addReminder(context: Context, noteId: String, atMillis: Long) {
-        viewModelScope.launch {
+        launchCommand {
             val reminder = ReminderEntity(
                 id = UUID.randomUUID().toString(),
                 noteId = noteId,
@@ -410,25 +469,25 @@ class MainViewModel(
     }
 
     fun cancelReminder(context: Context, reminder: ReminderEntity) {
-        viewModelScope.launch {
+        launchCommand {
             reminderDao.setState(reminder.id, ReminderState.CANCELLED, null)
             AlarmScheduler.cancel(context, reminder)
         }
     }
 
     fun completeReminder(context: Context, reminder: ReminderEntity) {
-        viewModelScope.launch {
+        launchCommand {
             reminderDao.setState(reminder.id, ReminderState.DONE, null)
             AlarmScheduler.cancel(context, reminder)
         }
     }
 
     fun setRuleEnabled(id: String, enabled: Boolean) {
-        viewModelScope.launch { ruleDao.setEnabled(id, enabled) }
+        launchCommand { ruleDao.setEnabled(id, enabled) }
     }
 
     fun addRule(keywords: List<String>, category: String) {
-        viewModelScope.launch {
+        launchCommand {
             ruleDao.upsert(
                 Rule(
                     id = UUID.randomUUID().toString(),
@@ -442,7 +501,7 @@ class MainViewModel(
     }
 
     fun deleteRule(id: String) {
-        viewModelScope.launch { ruleDao.delete(id) }
+        launchCommand { ruleDao.delete(id) }
     }
 
     /** Unfiltered (ignores [statusFilter]) — the detail screen needs to find a note by id
@@ -491,7 +550,7 @@ class MainViewModel(
 
     /** Triage swipe (and its Undo) — the status write already exists in the command handler. */
     fun setStatus(noteId: String, status: NoteStatus) {
-        viewModelScope.launch {
+        launchCommand {
             commands.setStatus(noteId, status)
             refresh.value++
         }
@@ -499,7 +558,7 @@ class MainViewModel(
 
     /** Detail/edit screen save. Title isn't editable — the backend has no command for it yet. */
     fun updateText(noteId: String, newText: String) {
-        viewModelScope.launch {
+        launchCommand {
             commands.updateRawText(noteId, newText)
             refresh.value++
         }
@@ -511,7 +570,7 @@ class MainViewModel(
 
     /** Save-first: returns as soon as the row is durable — the whole capture path. */
     fun capture(title: String, body: String, onSaved: (noteId: String) -> Unit) {
-        viewModelScope.launch {
+        launchCommand {
             val note = commands.create(
                 CreateNoteRequest(
                     source = NoteSource.TEXT,
@@ -528,7 +587,7 @@ class MainViewModel(
 
     /** Same save-first contract, source=VOICE: the transcript IS the note, no raw audio kept. */
     fun captureVoice(transcript: String, onSaved: (noteId: String) -> Unit) {
-        viewModelScope.launch {
+        launchCommand {
             val note = commands.create(
                 CreateNoteRequest(source = NoteSource.VOICE, transcript = transcript.ifBlank { null }),
             )
@@ -542,7 +601,7 @@ class MainViewModel(
     /** Same save-first contract, source=PHOTO: the image stays in app-private storage; the OCR
      *  text is reviewable/editable right up to this call — after it, it's sacred like any note. */
     fun capturePhoto(imagePath: String, ocrText: String, onSaved: (noteId: String) -> Unit) {
-        viewModelScope.launch {
+        launchCommand {
             val note = commands.create(
                 CreateNoteRequest(source = NoteSource.PHOTO, imagePath = imagePath, ocrText = ocrText.ifBlank { null }),
             )
@@ -558,7 +617,7 @@ class MainViewModel(
      *  since it's the same "an image + its recognized text" data. Review step (recognize → edit)
      *  happens in HandwritingCaptureScreen, same as Photo's OCR review. */
     fun captureInk(imagePath: String, recognizedText: String, onSaved: (noteId: String) -> Unit) {
-        viewModelScope.launch {
+        launchCommand {
             val note = commands.create(
                 CreateNoteRequest(source = NoteSource.INK, imagePath = imagePath, ocrText = recognizedText.ifBlank { null }),
             )
@@ -572,7 +631,7 @@ class MainViewModel(
     /** Same save-first contract, source=ATTACHMENT (D25): no review step — a copied file has
      *  nothing to correct before saving, unlike Voice/Photo's transcript/OCR text. */
     fun captureAttachment(path: String, fileName: String, onSaved: (noteId: String) -> Unit) {
-        viewModelScope.launch {
+        launchCommand {
             val note = commands.create(
                 CreateNoteRequest(source = NoteSource.ATTACHMENT, attachmentPath = path, attachmentFileName = fileName),
             )
@@ -584,14 +643,14 @@ class MainViewModel(
     }
 
     fun delete(noteId: String) {
-        viewModelScope.launch {
+        launchCommand {
             commands.softDelete(noteId)
             refresh.value++
         }
     }
 
     fun restore(noteId: String) {
-        viewModelScope.launch {
+        launchCommand {
             commands.restore(noteId)
             refresh.value++
         }
@@ -652,6 +711,11 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
         pendingOpenNoteId.value = intent?.getStringExtra(EXTRA_OPEN_NOTE_ID)
+        // Consume the extra once (plan 01 N1): a rotation recreates this Activity, re-running
+        // onCreate against the SAME Intent object (getIntent() returns it unchanged) — without
+        // this, every rotation re-set pendingOpenNoteId and yanked the user back to the notified
+        // note even after they had already navigated elsewhere.
+        intent?.removeExtra(EXTRA_OPEN_NOTE_ID)
         val model = ViewModelProvider(this, MainViewModel.factory(container))[MainViewModel::class.java]
 
         setContent {
@@ -681,8 +745,24 @@ class MainActivity : ComponentActivity() {
             LaunchedEffect(pendingNoteId) {
                 pendingNoteId?.let {
                     openNoteId = it
-                    showReminders = false
+                    // Clear EVERY screen flag (plan 01 N1), not just Reminders/Settings — whatever
+                    // screen the user had open when the notification arrived used to take
+                    // precedence in the `screen` when-expression below, so the note opened hidden
+                    // behind Trash, Rules, or any other still-true flag.
                     showSettings = false
+                    showVoiceCapture = false
+                    showTrash = false
+                    showRules = false
+                    showPhotoCapture = false
+                    showHandwritingCapture = false
+                    showTopics = false
+                    showPeople = false
+                    showPlaces = false
+                    showReminders = false
+                    showCategories = false
+                    showAiProposals = false
+                    showAiSetup = false
+                    showAiRunHistory = false
                     pendingOpenNoteId.value = null
                 }
             }
@@ -1611,6 +1691,13 @@ private fun SwipeableNote(
     var advanceArmed by remember(note.id) { mutableStateOf(false) }
     var expanded by rememberSaveable(note.id) { mutableStateOf(false) }
 
+    // The gesture block below only restarts when (note.id, canAdvance) changes. canAdvance stays
+    // true across an INBOX -> ACTIVE -> DONE sequence (every status but the last has a next one),
+    // so after the first swipe the block keeps running with `note` captured at its OLD status —
+    // the second swipe would then recompute nextStatus from stale state and repeat the first
+    // transition (plan 01 T1). rememberUpdatedState always reads the latest note instead.
+    val currentNote by rememberUpdatedState(note)
+
     fun settle() {
         scope.launch { offsetX.animateTo(0f, spring(Spring.DampingRatioMediumBouncy, Spring.StiffnessMedium)) }
     }
@@ -1628,14 +1715,15 @@ private fun SwipeableNote(
             detectHorizontalDragGestures(
                 onDragEnd = {
                     val x = offsetX.value
+                    val advanceableNow = nextStatus(currentNote.status) != null
                     when {
                         x <= -thresholdPx -> scope.launch {
                             offsetX.animateTo(-throwPx, tween(180))
                             onDelete()
                         }
-                        x >= thresholdPx && canAdvance -> scope.launch {
+                        x >= thresholdPx && advanceableNow -> scope.launch {
                             offsetX.animateTo(throwPx, tween(180))
-                            nextStatus(note.status)?.let { onAdvanceStatus(note.status, it) }
+                            nextStatus(currentNote.status)?.let { onAdvanceStatus(currentNote.status, it) }
                             // Unlike delete, the note stays in the dataset under its new
                             // status (same key), so this same card composable survives the
                             // status change — it must settle back to rest, or it's left
@@ -1653,11 +1741,11 @@ private fun SwipeableNote(
                     val beyond = abs(offsetX.value) > thresholdPx
                     val resisted = if (beyond) dragAmount * 0.35f else dragAmount
                     val target = (offsetX.value + resisted).let {
-                        if (!canAdvance) it.coerceAtMost(0f) else it
+                        if (nextStatus(currentNote.status) == null) it.coerceAtMost(0f) else it
                     }
                     scope.launch { offsetX.snapTo(target) }
                     val deleteNow = target <= -thresholdPx
-                    val advanceNow = target >= thresholdPx && canAdvance
+                    val advanceNow = target >= thresholdPx && nextStatus(currentNote.status) != null
                     if (deleteNow != deleteArmed || advanceNow != advanceArmed) {
                         haptics.performHapticFeedback(HapticFeedbackType.LongPress)
                     }
@@ -2046,22 +2134,27 @@ private fun PulsingDraftDot() {
 /**
  * Note detail/edit. Title isn't editable (no backend command for it yet, see
  * `NoteCommandHandler` — intentionally not touched for this UI pass); body uses the existing
- * save-first `updateRawText` command. Reads from [MainViewModel.allNotes] (already observed,
- * unfiltered by status) rather than a new query.
+ * save-first `updateRawText` command. The note itself comes from [MainViewModel.noteLookup] (a
+ * live single-note query that distinguishes loading from missing, plan 01 N1);
+ * [MainViewModel.allNotes] is still used for the link picker below.
  */
 @Composable
 fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit, onOpenNote: (String) -> Unit) {
     BackHandler(onBack = onBack)
 
     val allNotes by model.allNotes.collectAsStateWithLifecycle()
-    val note = allNotes.find { it.id == noteId }
+    // Loading vs. missing (plan 01 N1): the old code used allNotes directly, which starts as an
+    // empty list on first composition — indistinguishable from "this note was deleted" — and
+    // closed the screen immediately on every fresh open (including from a notification tap).
+    val lookup by remember(noteId) { model.noteLookup(noteId) }.collectAsStateWithLifecycle(initialValue = NoteLookup.Loading)
 
-    // The note can disappear out from under this screen (deleted via triage elsewhere);
-    // don't leave a dead screen open.
-    LaunchedEffect(note) {
-        if (note == null) onBack()
+    // The note can disappear out from under this screen (deleted via triage elsewhere); don't
+    // leave a dead screen open — but only once we genuinely know it's gone, not before the first
+    // emission has even arrived.
+    LaunchedEffect(lookup) {
+        if (lookup is NoteLookup.Missing) onBack()
     }
-    if (note == null) return
+    val note = (lookup as? NoteLookup.Found)?.note ?: return
 
     val originalBody = note.rawText ?: note.transcript ?: note.ocrText ?: ""
     var body by rememberSaveable(note.id) { mutableStateOf(originalBody) }
@@ -2070,6 +2163,22 @@ fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit, o
     val snackbarHost = remember { SnackbarHostState() }
     val scope = rememberCoroutineScope()
     val savedMsg = stringResource(R.string.note_saved)
+
+    val errorConflictMsg = stringResource(R.string.error_conflict)
+    val errorMissingMsg = stringResource(R.string.error_missing)
+    val errorEmptyMsg = stringResource(R.string.error_empty)
+    val errorUnknownMsg = stringResource(R.string.error_unknown)
+    LaunchedEffect(Unit) {
+        model.errors.collect { error ->
+            val message = when (error) {
+                is UiError.Conflict -> errorConflictMsg
+                is UiError.Missing -> errorMissingMsg
+                UiError.Empty -> errorEmptyMsg
+                is UiError.Unknown -> errorUnknownMsg
+            }
+            snackbarHost.showSnackbar(message)
+        }
+    }
 
     Scaffold(
         modifier = Modifier
@@ -2160,7 +2269,13 @@ fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit, o
 
             DerivedFactsSection(model = model, noteId = note.id)
 
-            RevisionHistorySection(model = model, noteId = note.id, onRevertedText = { body = it })
+            RevisionHistorySection(
+                model = model,
+                noteId = note.id,
+                currentText = originalBody,
+                isEditorDirty = dirty,
+                onRevertedText = { body = it },
+            )
 
             NoteLinksSection(model = model, note = note, allNotes = allNotes, onOpenNote = onOpenNote)
 
@@ -2245,34 +2360,79 @@ private fun originLabel(raw: String): String = when (val origin = Origin.parse(r
  *  through the normal [MainViewModel.updateText] command, so it's itself a new audited
  *  revision — append-only stays true automatically, no new command needed. */
 @Composable
-private fun RevisionHistorySection(model: MainViewModel, noteId: String, onRevertedText: (String) -> Unit) {
+private fun RevisionHistorySection(
+    model: MainViewModel,
+    noteId: String,
+    currentText: String,
+    isEditorDirty: Boolean,
+    onRevertedText: (String) -> Unit,
+) {
     val entries by remember(noteId) { model.auditForNote(noteId) }.collectAsStateWithLifecycle(initialValue = emptyList())
     if (entries.isEmpty()) return
     val json = remember { Json { ignoreUnknownKeys = true } }
     fun decode(raw: String?): NoteSnapshot? = raw?.let { runCatching { json.decodeFromString(NoteSnapshot.serializer(), it) }.getOrNull() }
+    fun textOf(snapshot: NoteSnapshot?): String? = snapshot?.rawText ?: snapshot?.transcript ?: snapshot?.ocrText
+
+    // "Current" (plan 01 V1) = the newest entry whose resulting text actually matches the note's
+    // saved text right now — not just entries[0] (the newest audit row of ANY kind), which could
+    // be a status change or an undo that didn't touch the text at all.
+    val currentIndex = entries.indexOfFirst { textOf(decode(it.after)) == currentText }
+    var pendingRevertText by remember(noteId) { mutableStateOf<String?>(null) }
+
+    fun revert(text: String) {
+        model.updateText(noteId, text)
+        onRevertedText(text)
+    }
 
     Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
         Text(stringResource(R.string.revision_history_title), style = MaterialTheme.typography.titleMedium)
         entries.forEachIndexed { index, entry ->
             val before = decode(entry.before)
             val after = decode(entry.after)
+            // If the snapshot (or its text) is missing, there's nothing safe to revert to — a
+            // bare "" fallback here used to silently blank the note out (plan 01 V1).
+            val revertText = textOf(before)
             RevisionRow(
                 entry = entry,
                 before = before,
                 after = after,
-                isCurrent = index == 0,
+                isCurrent = index == currentIndex,
+                canRevert = revertText != null,
                 onRevert = {
-                    val text = before?.rawText ?: before?.transcript ?: before?.ocrText ?: ""
-                    model.updateText(noteId, text)
-                    onRevertedText(text)
+                    if (isEditorDirty) pendingRevertText = revertText else revertText?.let(::revert)
                 },
             )
         }
     }
+
+    val confirmText = pendingRevertText
+    if (confirmText != null) {
+        AlertDialog(
+            onDismissRequest = { pendingRevertText = null },
+            title = { Text(stringResource(R.string.revert_confirm_title)) },
+            text = { Text(stringResource(R.string.revert_confirm_body)) },
+            confirmButton = {
+                TextButton(onClick = {
+                    revert(confirmText)
+                    pendingRevertText = null
+                }) { Text(stringResource(R.string.revert_confirm_action)) }
+            },
+            dismissButton = {
+                TextButton(onClick = { pendingRevertText = null }) { Text(stringResource(R.string.cancel)) }
+            },
+        )
+    }
 }
 
 @Composable
-private fun RevisionRow(entry: AuditEntity, before: NoteSnapshot?, after: NoteSnapshot?, isCurrent: Boolean, onRevert: () -> Unit) {
+private fun RevisionRow(
+    entry: AuditEntity,
+    before: NoteSnapshot?,
+    after: NoteSnapshot?,
+    isCurrent: Boolean,
+    canRevert: Boolean,
+    onRevert: () -> Unit,
+) {
     val rowShape = RoundedCornerShape(16.dp)
     Card(
         shape = rowShape,
@@ -2322,7 +2482,7 @@ private fun RevisionRow(entry: AuditEntity, before: NoteSnapshot?, after: NoteSn
                     )
                 }
             }
-            if (!isCurrent && entry.action == AuditAction.UPDATE_RAW_TEXT) {
+            if (!isCurrent && entry.action == AuditAction.UPDATE_RAW_TEXT && canRevert) {
                 TextButton(onClick = onRevert, modifier = Modifier.padding(start = 0.dp)) {
                     Text(stringResource(R.string.revision_revert))
                 }

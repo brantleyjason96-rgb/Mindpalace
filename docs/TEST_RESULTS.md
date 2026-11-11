@@ -1,5 +1,26 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 01 step 1d (crash handling, revert safety, note-detail load, stale swipe) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
+**Result:** `BUILD SUCCESSFUL` — **115 tests (unchanged), 0 failures, 0 errors, 2 skipped**.
+`assembleDebug` also green. No schema change. No new automated tests this step (no Compose UI
+test library in the project yet — `docs/plans/INDEX.md` OD-10) — verified by compile + full
+unit suite + manual trace against each bug's repro steps. **Owner should exercise on-device**:
+a command error showing a snackbar, revert-with-unsaved-edits confirmation, opening a note from
+a notification after rotating, and two status-advancing swipes in a row on the same note.
+
+Fixes in this step (D31 in `docs/DECISIONS.md`): `MainViewModel` now wraps every write in a
+`launchCommand` helper that reports failures via a new `errors` flow instead of crashing;
+`NoteDetailScreen` shows them as a snackbar. `RevisionHistorySection`'s Revert button is disabled
+when there's nothing safe to revert to, confirms before discarding unsaved edits, and marks
+"current" by matching saved text instead of trusting the newest audit row's position.
+`NoteDetailScreen` loads via a new live single-note query (`NoteLookup`) instead of treating an
+empty not-yet-populated list the same as "deleted". `MainActivity.onCreate` consumes the
+notification intent extra once and clears every screen flag, not just two of them.
+`SwipeableNote`'s drag gesture reads the note via `rememberUpdatedState` so two status-advancing
+swipes in a row both apply.
+
 ## 2026-11-11 — Plan 01 step 1c (search sanitizer, ranking, LIKE fallback) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`

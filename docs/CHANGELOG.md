@@ -2,6 +2,26 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 01 step 1d: crash handling, revert safety, note-detail load, stale swipe
+
+### Fixed
+- A command failure (stale revision, note deleted elsewhere, empty capture, or anything else) no
+  longer crashes the app — `MainViewModel` reports it through a new `errors` flow; the note detail
+  screen shows it as a snackbar.
+- Reverting to an earlier revision can no longer blank a note when its snapshot is
+  missing/incomplete — the button is disabled instead. Reverting with unsaved edits in the editor
+  now asks for confirmation first.
+- Opening a note just closed it again on first load (including from a notification tap) — it now
+  waits for the actual "not found" answer instead of treating "no data has arrived yet" as
+  "deleted". A screen rotation after tapping a reminder notification no longer re-navigates to
+  that note if you'd already moved on; opening a note from a notification no longer leaves it
+  hidden behind whatever other screen (Trash, Rules, …) happened to still be open.
+- Swiping the same note across two status changes in a row (e.g. Inbox → Active → Done) only
+  applied the first one; the second repeated it.
+
+### Test count: 115 (unchanged — no Compose UI testing library in the project yet; verified by
+compile + full suite + manual trace). See `docs/TEST_RESULTS.md`.
+
 ## Unreleased — 2026-11-11 — Plan 01 step 1c: search sanitizer, relevance ranking, LIKE fallback
 
 ### Added

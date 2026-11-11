@@ -138,6 +138,14 @@
     <string name="revision_action_restore">Restored</string>
     <string name="revision_action_undo">Undo</string>
     <string name="revision_action_update_title">Title changed</string>
+    <string name="revert_confirm_title">Discard unsaved changes?</string>
+    <string name="revert_confirm_body">Reverting replaces your unsaved edits with this earlier version.</string>
+    <string name="revert_confirm_action">Revert</string>
+    <string name="cancel">Cancel</string>
+    <string name="error_conflict">This note changed elsewhere — reopen it and try again</string>
+    <string name="error_missing">This note no longer exists</string>
+    <string name="error_empty">Nothing to save</string>
+    <string name="error_unknown">Something went wrong — please try again</string>
     <string name="revision_actor_user">By you</string>
     <string name="revision_actor_rule">By a rule</string>
     <string name="revision_actor_ai">By AI (approved)</string>
