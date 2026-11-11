@@ -2,6 +2,22 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 01 step 1c: search sanitizer, relevance ranking, LIKE fallback
+
+### Added
+- `FtsQuery.sanitize(query, prefixLast = true)` — prefix matching on the last token ("oat" finds
+  "oatmeal"), a 12-token/64-char cap, and control-character stripping.
+- `NoteSearch.search(noteDao, query)` — the search entry point the app should call: sanitized,
+  relevance-ranked (`bm25`), falls back to `searchLike` on a database exception. New
+  `NoteDao.searchFtsRanked` and `NoteDao.observeDeleted` (a live Trash query, not yet wired into
+  the UI — that's plan 07).
+
+### Fixed
+- `NoteDao.searchLike`'s LIKE fallback query had no `ESCAPE` clause, so a literal `%`/`_` the
+  caller tried to escape was never actually treated literally by SQLite. Added `ESCAPE '\'`.
+
+### Test count: 115 (was 107). See `docs/TEST_RESULTS.md`.
+
 ## Unreleased — 2026-11-11 — Plan 01 step 1b: undo redesign, optimistic concurrency, updateTitle
 
 ### Changed

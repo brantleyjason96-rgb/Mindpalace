@@ -458,3 +458,36 @@ Verified locally: `./gradlew testDebugUnitTest` — 107 tests (was 98), 0 failur
 (same two pre-existing `@Ignore`d bug records). `./gradlew assembleDebug` also green. No schema
 change (plan 01 step 1a/1b together don't touch the schema, per `docs/plans/01-audit-punch-list.md`'s
 execution table).
+
+## D30 — Plan 01 step 1c: search sanitizer upgrade, relevance ranking, LIKE fallback
+Nov 11, 2026. Executing `docs/plans/01-audit-punch-list.md` step 1c (S1–S3, backend part only —
+files allowed: `core/db/Daos.kt`, `core/db/FtsQuery.kt`, new `core/db/NoteSearch.kt`, tests).
+
+**S1 (no prefix matching):** `FtsQuery.sanitize` gained a `prefixLast: Boolean = false` parameter
+(default keeps every existing call site's behavior unchanged) — when true, appends FTS5's `*`
+prefix operator to the final token only, so "oat" matches "oatmeal" while a word the user already
+finished typing stays an exact match. Also caps at 12 tokens of 64 characters each, and strips
+embedded control characters (not just literal quotes) — splitting on whitespace happens BEFORE
+that stripping, so a real tab/newline separator is never accidentally merged into a neighboring
+token the way filtering-then-splitting would have done.
+
+**S2 (NUL crashes search):** was already effectively fixed by the control-character stripping
+above — a NUL byte is removed before it ever reaches FTS5's MATCH parser.
+
+**S3 (LIKE fallback dead code, stale lists):** new `NoteSearch.search(noteDao, query)` is the
+actual entry point the app should call — sanitizes with `prefixLast = true`, queries the new
+`NoteDao.searchFtsRanked` (same MATCH, but `ORDER BY bm25(notes_fts) ASC` for relevance instead
+of recency), and falls back to `searchLike` on `android.database.SQLException`. `searchLike`'s
+query gained `ESCAPE '\'` clauses — it had no escape character declared at all, so the "literal
+%/_ " fallback path **existing before this commit was already broken**: escaping a `%` without a
+declared `ESCAPE` clause does nothing in SQLite. `NoteSearch.likeEscape` escapes `\`, `%`, `_` for
+callers. Also added `NoteDao.observeDeleted(limit)` (a live Trash query) alongside the existing
+one-shot `recentlyDeleted` — wiring it into the UI (replacing `MainActivity`'s one-shot `trash`
+state) is out of scope here (not in this step's files-allowed list) and is left for plan 07's
+restructure, same precedent as other UI-touching items in this punch list.
+
+Not done in this step, deliberately: making search itself a `Flow` so the UI re-queries on any
+table change — that's UI wiring (`MainActivity.kt`), out of this step's scope.
+
+Verified locally: `./gradlew testDebugUnitTest` — 115 tests (was 107), 0 failures, 2 skipped
+(same two pre-existing bug records). `./gradlew assembleDebug` also green. No schema change.

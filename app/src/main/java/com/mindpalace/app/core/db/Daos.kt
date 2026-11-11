@@ -55,6 +55,10 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE deleted_at IS NOT NULL ORDER BY updated_at DESC LIMIT :limit")
     suspend fun recentlyDeleted(limit: Int): List<NoteEntity>
 
+    /** Live Trash list (plan 01 S3) — re-queries on any table change, unlike the one-shot above. */
+    @Query("SELECT * FROM notes WHERE deleted_at IS NOT NULL ORDER BY updated_at DESC LIMIT :limit")
+    fun observeDeleted(limit: Int): Flow<List<NoteEntity>>
+
     @Query("SELECT * FROM notes WHERE deleted_at IS NULL AND updated_at > :since ORDER BY updated_at ASC")
     suspend fun changedSince(since: Long): List<NoteEntity>
 
@@ -125,11 +129,28 @@ interface NoteDao {
     )
     suspend fun searchFts(ftsQuery: String, limit: Int): List<NoteEntity>
 
-    /** Plain LIKE fallback if FTS5 is unavailable on some device build (§15 mitigation). */
+    /**
+     * Same match as [searchFts], ordered by relevance (plan 01 S3) instead of recency — `bm25`
+     * scores more relevant rows more negative, so ascending order puts the best match first.
+     * This is what [NoteSearch.search] actually uses; [searchFts] stays for the one existing
+     * recency-ordered caller/test.
+     */
+    @Query(
+        "SELECT notes.* FROM notes JOIN notes_fts ON notes.rowid = notes_fts.rowid " +
+            "WHERE notes_fts MATCH :ftsQuery AND notes.deleted_at IS NULL " +
+            "ORDER BY bm25(notes_fts) ASC LIMIT :limit",
+    )
+    suspend fun searchFtsRanked(ftsQuery: String, limit: Int): List<NoteEntity>
+
+    /**
+     * Plain LIKE fallback if FTS5 is unavailable on some device build (§15 mitigation). The
+     * ESCAPE clause makes `\` the escape character so a literal `%`/`_` in the query (escaped by
+     * the caller, e.g. [NoteSearch]) is matched literally instead of acting as a wildcard.
+     */
     @Query(
         "SELECT * FROM notes WHERE deleted_at IS NULL AND (" +
-            "title LIKE '%' || :q || '%' OR raw_text LIKE '%' || :q || '%' " +
-            "OR transcript LIKE '%' || :q || '%' OR ocr_text LIKE '%' || :q || '%') " +
+            "title LIKE '%' || :q || '%' ESCAPE '\\' OR raw_text LIKE '%' || :q || '%' ESCAPE '\\' " +
+            "OR transcript LIKE '%' || :q || '%' ESCAPE '\\' OR ocr_text LIKE '%' || :q || '%' ESCAPE '\\') " +
             "ORDER BY updated_at DESC LIMIT :limit",
     )
     suspend fun searchLike(q: String, limit: Int): List<NoteEntity>

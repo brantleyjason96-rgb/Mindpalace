@@ -201,6 +201,41 @@ class NoteDaoTest {
         }
     }
 
+    // ------------------------------------------------------------------------- plan 01 step 1c
+
+    @Test
+    fun prefixSearchMatchesAPartialLastWord() = runTest {
+        db.noteDao().insert(note("n1", "buy oatmeal for breakfast"))
+        val hits = NoteSearch.search(db.noteDao(), "oat")
+        assertEquals(listOf("n1"), hits.map { it.id })
+    }
+
+    @Test
+    fun searchResultsAreRanked() = runTest {
+        db.noteDao().insert(note("n1", "drift drift drift continental", at = 1_000L))
+        db.noteDao().insert(note("n2", "a little continental drift", at = 2_000L))
+        // n2 is newer, but n1 mentions "drift" three times and must rank first by relevance.
+        val hits = NoteSearch.search(db.noteDao(), "drift")
+        assertEquals(listOf("n1", "n2"), hits.map { it.id })
+    }
+
+    @Test
+    fun likeSearchFallbackTreatsPercentAndUnderscoreLiterally() = runTest {
+        db.noteDao().insert(note("n1", "100% done"))
+        db.noteDao().insert(note("n2", "100 done"))
+        val hits = db.noteDao().searchLike(NoteSearch.likeEscape("100%"), 10)
+        assertEquals(listOf("n1"), hits.map { it.id })
+    }
+
+    @Test
+    fun searchNeverThrowsOnHostileInput() = runTest {
+        db.noteDao().insert(note("n1", "safe text"))
+        val hostileInputs = listOf("-", "( )", "***", "+", "{}", "🙂", "\u0000", "a OR", "'")
+        for (q in hostileInputs) {
+            NoteSearch.search(db.noteDao(), q) // must not throw
+        }
+    }
+
     @Test
     @Ignore("G1, fixed in plan 10: RuleDao.enabled() orders by id (random UUID), not insertion order")
     fun enabledRulesComeBackInAStableIntendedOrder() = runTest {
