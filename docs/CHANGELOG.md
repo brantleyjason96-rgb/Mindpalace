@@ -2,6 +2,24 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 02 §5 step 1: baseline untagged tests
+
+### Added
+- ~40 new unit tests from `docs/plans/02-missing-tests.md` §3 (the tests that should already pass
+  on today's code): undo-of-soft-delete, no-op edits, soft-deleted-note guards, audit snapshot
+  contents, proposal approval for CATEGORY/TAG/TOPIC/PLACE, stale-revision guards, FTS behavior
+  (edits, restore, transcript/ocr columns, case/diacritic folding, integrity check), a foreign-key
+  enforcement probe, export edge cases (empty DB, unicode, null fields, unknown-key decoding), and
+  new suites `FtsQueryTest`, `OriginTest`, `AiProposalValidatorTest`, `ShareReceiverActivityTest`,
+  `ManifestComponentsTest` (regression guard for the D25 wrong-path crash).
+- Two known bugs (A3, G1 in `docs/plans/01-audit-punch-list.md`) recorded as `@Ignore`d failing
+  tests rather than silently left uncovered.
+
+### Fixed
+- Stray word "quilks" in `NoteFtsEntity`'s KDoc (plan 01 Z2.12).
+
+### Test count: 91 (was 49). See `docs/TEST_RESULTS.md`.
+
 ## [0.1.0] — 2026-11-08 — Phase 0 complete + Phase 1 backend core
 
 ### Added

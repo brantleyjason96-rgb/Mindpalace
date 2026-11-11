@@ -4,12 +4,19 @@ import android.content.Context
 import androidx.room3.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
+import android.database.SQLException
+import androidx.room3.executeSQL
+import androidx.room3.useWriterConnection
+import com.mindpalace.app.core.model.DerivedField
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
+import org.junit.Assert.fail
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -113,5 +120,93 @@ class NoteDaoTest {
     fun likeSearchFallbackWorks() = runTest {
         db.noteDao().insert(note("n1", "continental drift quiz"))
         assertEquals(1, db.noteDao().searchLike("drift", 10).size)
+    }
+
+    // ------------------------------------------------------------------ plan 02 §3.2 (untagged)
+
+    @Test
+    fun guardedStatusDeleteAndRestoreRejectStaleRevisions() = runTest {
+        db.noteDao().insert(note("n1", "a", rev = 1))
+        assertEquals(0, db.noteDao().updateStatusGuarded("n1", NoteStatus.DONE, now = 2_000L, revision = 7))
+        assertEquals(0, db.noteDao().softDeleteGuarded("n1", now = 2_000L, revision = 7))
+
+        // Delete with the correct revision, then try to restore with the wrong one.
+        assertEquals(1, db.noteDao().softDeleteGuarded("n1", now = 2_000L, revision = 1))
+        assertEquals(0, db.noteDao().restoreGuarded("n1", now = 3_000L, revision = 7))
+    }
+
+    @Test
+    fun ftsFollowsEdits() = runTest {
+        db.noteDao().insert(note("n1", "alpha"))
+        db.noteDao().updateRawTextGuarded("n1", "beta", now = 2_000L, revision = 1)
+
+        assertEquals(0, db.noteDao().searchFts(FtsQuery.sanitize("alpha")!!, limit = 10).size)
+        assertEquals(1, db.noteDao().searchFts(FtsQuery.sanitize("beta")!!, limit = 10).size)
+    }
+
+    @Test
+    fun ftsFindsRestoredNotesAgain() = runTest {
+        db.noteDao().insert(note("n1", "lesson plan draft"))
+        db.noteDao().softDeleteGuarded("n1", now = 2_000L, revision = 1)
+        db.noteDao().restoreGuarded("n1", now = 3_000L, revision = 2)
+
+        assertEquals(1, db.noteDao().searchFts(FtsQuery.sanitize("draft")!!, limit = 10).size)
+    }
+
+    @Test
+    fun ftsCoversTranscriptAndOcrColumns() = runTest {
+        db.noteDao().insert(note("n1", raw = "n/a").copy(transcript = "spoken words here"))
+        db.noteDao().insert(note("n2", raw = "n/a").copy(ocrText = "scanned handwriting text"))
+
+        assertEquals(1, db.noteDao().searchFts(FtsQuery.sanitize("spoken")!!, limit = 10).size)
+        assertEquals(1, db.noteDao().searchFts(FtsQuery.sanitize("scanned")!!, limit = 10).size)
+    }
+
+    @Test
+    fun ftsFoldsCaseAndDiacritics() = runTest {
+        db.noteDao().insert(note("n1", "El café"))
+        assertEquals(1, db.noteDao().searchFts(FtsQuery.sanitize("CAFE")!!, limit = 10).size)
+    }
+
+    @Test
+    fun ftsIntegrityCheckPassesAfterChurn() = runTest {
+        repeat(50) { i -> db.noteDao().insert(note("n$i", "note body $i")) }
+        repeat(20) { i -> db.noteDao().updateRawTextGuarded("n$i", "edited body $i", now = 2_000L, revision = 1) }
+        repeat(10) { i -> db.noteDao().softDeleteGuarded("n$i", now = 3_000L, revision = 2) }
+
+        // Throws SQLiteException if the shadow FTS5 index has drifted from the content table.
+        db.useWriterConnection { connection ->
+            connection.executeSQL("INSERT INTO notes_fts(notes_fts) VALUES('integrity-check')")
+        }
+    }
+
+    @Test
+    fun foreignKeysAreEnforced() = runTest {
+        // Probe (plan 02 §3.2 T-FK1): if this does not throw, foreign keys are not enforced and
+        // the plan's assumption needs to be revisited rather than this test loosened.
+        try {
+            db.derivedDao().upsert(
+                DerivedEntity(
+                    noteId = "does-not-exist",
+                    field = DerivedField.CATEGORY,
+                    value = "Inbox",
+                    origin = "system",
+                    confidence = 1f,
+                    createdAt = 1_000L,
+                ),
+            )
+            fail("expected a foreign key violation for a derived row on a missing note")
+        } catch (e: SQLException) {
+            assertTrue(e.message.orEmpty().contains("FOREIGN KEY", ignoreCase = true))
+        }
+    }
+
+    @Test
+    @Ignore("G1, fixed in plan 10: RuleDao.enabled() orders by id (random UUID), not insertion order")
+    fun enabledRulesComeBackInAStableIntendedOrder() = runTest {
+        db.ruleDao().upsert(RuleEntity(id = "b", version = 1, enabled = true, matcher = "{}", action = "{}"))
+        db.ruleDao().upsert(RuleEntity(id = "a", version = 1, enabled = true, matcher = "{}", action = "{}"))
+
+        assertEquals(listOf("b", "a"), db.ruleDao().enabled().map { it.id })
     }
 }

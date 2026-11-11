@@ -85,7 +85,7 @@ data class NoteEntity(
 /**
  * FTS5 index over the searchable note columns (plan §4: "FTS5 for search" — satisfied via
  * androidx.room3, D3 in docs/DECISIONS.md). External-content mode: Room keeps it in sync with
- * [NoteEntity] via generated triggers; writes go ONLY to the notes table. quilks
+ * [NoteEntity] via generated triggers; writes go ONLY to the notes table.
  */
 @Fts5(
     contentEntity = NoteEntity::class,

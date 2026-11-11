@@ -1,5 +1,30 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 02 §5 step 1 (baseline untagged tests) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest`
+**Result:** `BUILD SUCCESSFUL` — **91 tests, 0 failures, 0 errors, 2 skipped**
+(`@Ignore`d bug records: T-PR3 for A3, T-ORD1 for G1 — kept on record per plan 02).
+Run locally on the owner's Mac (unlike the cloud-planning session, this one has the Android SDK
+and a JDK via Android Studio's bundled JBR, so tests ran directly instead of waiting on CI).
+
+Added this step: every untagged test from `docs/plans/02-missing-tests.md` §3 that was feasible
+without new production code — `NoteCommandHandlerTest` (undo-of-soft-delete, no-op edits,
+soft-deleted-note guards, audit snapshot contents, approve-CATEGORY/TAG/TOPIC/PLACE, approve-on-
+deleted-note), `NoteDaoTest` (stale-revision guards, FTS follows edits/restore/transcript/ocr/
+case-folding, FTS integrity check, foreign-key enforcement probe), new `FtsQueryTest` (sanitizer
+unit tests), new `OriginTest`, new `AiProposalValidatorTest`, new `ShareReceiverActivityTest`
+(non-SEND intent only — the SEND-intent cases are tagged (1a) and land with that step), new
+`ManifestComponentsTest` (D25 regression guard), and four new `NoteExporterTest` cases.
+
+Found during this pass (not yet fixed — tracked by `docs/plans/01-audit-punch-list.md`):
+foreign keys ARE enforced (Room enables them by default), but the violation surfaces as a plain
+`android.database.SQLException`, not `SQLiteConstraintException` — worth a note if a later plan
+catches by type. `ManifestComponentsTest` had to allow-list several androidx-library components
+(WorkManager's job service/diagnostics receiver, profileinstaller's install receiver, Compose
+preview tooling, androidx.test instrumentation activities) that are exported by the libraries
+themselves, not by this app.
+
 ## 2026-11-08 — Phase 0 + Phase 1 backend — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME=<AS JBR 25> ./gradlew testDebugUnitTest assembleDebug`

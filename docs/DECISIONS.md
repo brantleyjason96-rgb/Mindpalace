@@ -355,3 +355,32 @@ Updated in the same pass: `PrivacyManifestTest` (removed the two dedicated "no I
 ACCESS_NETWORK_STATE" tests, which would now permanently fail; added both to the approved-list
 test with a new test asserting they're present), `docs/PERMISSIONS.md`, and CLAUDE.md rule 1's
 wording (from an absolute "never" to "default to no, with this one documented, scoped exception").
+
+## D27 — Plan 02 §5 step 1: ran locally instead of waiting on CI; two findings recorded, not fixed
+Nov 11, 2026. Executing `docs/plans/INDEX.md` order item 1 (the untagged baseline tests from
+`docs/plans/02-missing-tests.md`). Unlike the planning session that wrote these plans, this
+execution runs on the owner's own Mac, which has the Android SDK and a usable JDK via Android
+Studio's bundled JBR (`/Applications/Android Studio.app/Contents/jbr/Contents/Home`) — so
+`./gradlew testDebugUnitTest` runs directly and the plans' "push, then wait for CI" loop wasn't
+needed for this step.
+
+Two things the writing-up surfaced, worth recording so they're not rediscovered as surprises:
+1. Room **does** enforce foreign keys by default (T-FK1's probe), but a violation throws a plain
+   `android.database.SQLException`, not `android.database.sqlite.SQLiteConstraintException` —
+   relevant if a later plan catches by exception type.
+2. `ManifestComponentsTest` (new, T-MAN1/T-MAN2) needed an allow-list for several exported
+   components this app doesn't declare: `androidx.work.impl.background.systemjob.SystemJobService`
+   and `androidx.work.impl.diagnostics.DiagnosticsReceiver` (WorkManager), `androidx.profileinstaller.ProfileInstallReceiver`,
+   `androidx.compose.ui.tooling.PreviewActivity`, and three `androidx.test` instrumentation
+   activities — all exported by their own libraries, not by this app's manifest.
+
+Z2.12 (the stray "quilks" word in `NoteFtsEntity`'s KDoc, `core/db/NoteEntities.kt`) was fixed in
+this step alongside the tests that exercise that file, even though plan 01's step 1a — which also
+lists Z2.12 — scopes its "files allowed" to `core/model/Model.kt` and not `core/db`. Recorded here
+rather than left silent: a one-word doc typo fix is low enough risk that stopping entirely over
+the mismatch wasn't worth it, but the discrepancy between plan 01's execution table and its own
+files-allowed list is real and should be reconciled there.
+
+No production code changed in this step beyond that one doc comment — test files only otherwise
+(plus this entry, `CHANGELOG.md`, and `docs/TEST_RESULTS.md`). `docs/plans/01-audit-punch-list.md`
+step 1a is next.

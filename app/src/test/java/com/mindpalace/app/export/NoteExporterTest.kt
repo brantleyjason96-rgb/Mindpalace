@@ -92,4 +92,50 @@ class NoteExporterTest {
         assertTrue(mdFile.exists())
         assertTrue(mdFile.readText().contains("file round trip"))
     }
+
+    // ------------------------------------------------------------------- plan 02 §3.6 (untagged)
+
+    @Test
+    fun `an empty database exports a valid, empty payload`() = runTest {
+        val exporter = NoteExporter(db.noteDao(), now = { 1_000 })
+        val payload = NoteExporter.decode(exporter.buildJson())
+
+        assertEquals(0, payload.noteCount)
+        assertTrue(payload.notes.isEmpty())
+    }
+
+    @Test
+    fun `unicode and newlines survive a round trip`() = runTest {
+        val tricky = "emoji 😀 and\nnewlines\nand élève"
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = tricky))
+
+        val payload = NoteExporter.decode(NoteExporter(db.noteDao(), now = { 1_000 }).buildJson())
+        assertEquals(tricky, payload.notes.single { it.id == note.id }.rawText)
+    }
+
+    @Test
+    fun `absent optional fields stay null`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "bare"))
+
+        val payload = NoteExporter.decode(NoteExporter(db.noteDao(), now = { 1_000 }).buildJson())
+        val exported = payload.notes.single { it.id == note.id }
+        assertEquals(null, exported.title)
+        assertEquals(null, exported.transcript)
+        assertEquals(null, exported.ocrText)
+        assertEquals(null, exported.sourceUrl)
+        assertEquals(null, exported.sourceApp)
+    }
+
+    @Test
+    fun `decode ignores unknown keys`() {
+        val json = """
+            {"schema_version":1,"app":"MindPalace","exported_at":1,"note_count":1,"notes":[
+              {"id":"n1","created_at":1,"updated_at":1,"source":"TEXT","status":"INBOX","revision":1,
+               "raw_text":"hi","from_the_future_field":"ignore me"}
+            ]}
+        """.trimIndent()
+
+        val payload = NoteExporter.decode(json)
+        assertEquals("hi", payload.notes.single().rawText)
+    }
 }
