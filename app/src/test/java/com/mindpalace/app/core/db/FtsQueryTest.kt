@@ -43,4 +43,31 @@ class FtsQueryTest {
         val sanitized = FtsQuery.sanitize("oat milk")!!
         assertEquals(2, sanitized.split(" ").size)
     }
+
+    // ------------------------------------------------------------------------- plan 01 step 1c
+
+    @Test
+    fun `an embedded control character is stripped and the last token gets a prefix star`() {
+        assertEquals("\"oat\"*", FtsQuery.sanitize("\u0000oat", prefixLast = true))
+    }
+
+    @Test
+    fun `only the first 12 tokens are kept`() {
+        val forty = (1..40).joinToString(" ") { "w$it" }
+        val sanitized = FtsQuery.sanitize(forty)!!
+        assertEquals(12, sanitized.split(" ").size)
+    }
+
+    @Test
+    fun `a single token is cut to 64 characters`() {
+        val longToken = "a".repeat(500)
+        val sanitized = FtsQuery.sanitize(longToken)!!
+        // sanitized is the token wrapped in quotes: "<64 a's>"
+        assertEquals(64, sanitized.length - 2)
+    }
+
+    @Test
+    fun `prefix star only applies to the last token`() {
+        assertEquals("\"oat\" \"mi\"*", FtsQuery.sanitize("oat mi", prefixLast = true))
+    }
 }

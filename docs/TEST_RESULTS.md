@@ -1,5 +1,18 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 01 step 1c (search sanitizer, ranking, LIKE fallback) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
+**Result:** `BUILD SUCCESSFUL` — **115 tests, 0 failures, 0 errors, 2 skipped** (same two
+`@Ignore`d bug records: A3, G1). `assembleDebug` also green. No schema change.
+
+Fixes in this step (D30 in `docs/DECISIONS.md`): `FtsQuery.sanitize` adds prefix matching on the
+last token, a 12-token/64-char cap, and control-character stripping that doesn't eat legitimate
+whitespace separators. New `NoteSearch.search` ranks FTS5 hits by relevance (`bm25`) and falls
+back to `searchLike` on a database exception. `searchLike`'s LIKE fallback query was missing an
+`ESCAPE` clause entirely — its "escape %/_ literally" contract was silently broken before this
+fix, since SQLite's `LIKE` has no default escape character.
+
 ## 2026-11-11 — Plan 01 step 1b (undo redesign, optimistic concurrency, updateTitle) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
