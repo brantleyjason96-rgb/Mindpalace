@@ -573,3 +573,35 @@ then plan 07 (the `MainActivity.kt` split), before the hardening plans (08–13)
 
 Verified locally: `./gradlew testDebugUnitTest assembleDebug` — 115 tests (unchanged), 0
 failures, 2 skipped. Docs-only + one comment change; no production logic touched.
+
+## D33 — Plan 14: migration test framework closed out; `ALL_MIGRATIONS` is the single registration point
+Nov 11, 2026. Executing `docs/plans/14-migration-test-framework.md` (G1–G5, G7; G6 — moving the
+schema assets to the `debug` source set — skipped as explicitly optional/low-priority in the plan).
+
+New `core/db/ALL_MIGRATIONS` (`core/db/Migrations.kt`) is now the one list `AppContainer` and
+every test use — nothing else registers a migration, so writing one and forgetting to add it to
+the builder (which previously crashed the app on upgrade with "no migration found") is no longer
+possible by construction. `MindPalaceApplication`'s builder now does
+`.addMigrations(*ALL_MIGRATIONS.toTypedArray())`.
+
+New `MigrationFixtures` (`app/src/test/.../core/db/MigrationFixtures.kt`): `seedV1` inserts one
+row into every schema-v1 table via raw SQL (two notes, one derived fact, one link, one reminder,
+one row each in people/places/rules/topics/ai_index/proposals/ai_runs/audit/jobs); `rowCounts`
+reads back counts per table for before/after comparison.
+
+Seven new tests in `MigrationTest` (T-MIG1–T-MIG7): migrating 1→latest preserves every row and
+the original `raw_text` verbatim (G1); FTS still finds pre-migration text afterward, and a fresh
+`INSERT INTO notes_fts(notes_fts) VALUES('integrity-check')` doesn't throw (G3); the FTS triggers
+still fire for a row inserted post-migration; a real `Room.databaseBuilder` (not just
+`MigrationTestHelper`) opens the migrated file cleanly (G2); `ALL_MIGRATIONS`' version pairs are
+contiguous and reach the current version; a schema JSON exists for every version 1..LATEST; and a
+plain source scan confirms `fallbackToDestructiveMigration` appears nowhere (G5) — that one line
+would silently erase every note on the next upgrade.
+
+`LATEST` is read reflectively from `MindPalaceDatabase`'s `@Database` annotation when the JVM
+retains it at runtime, falling back to a hardcoded `3` otherwise (the plan's documented fallback);
+either way, T-MIG6 (schema-file-exists) keeps it honest.
+
+Verified locally: `./gradlew testDebugUnitTest assembleDebug` — 122 tests (was 115, +7 exactly as
+the plan's "done when" specifies), 0 failures, 2 skipped (same pre-existing bug records). No
+schema change — `app/schemas` untouched, confirmed via `git diff --stat`.

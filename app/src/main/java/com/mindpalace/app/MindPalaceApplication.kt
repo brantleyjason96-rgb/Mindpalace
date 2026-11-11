@@ -7,8 +7,7 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import com.mindpalace.app.ai.AiNightRunner
 import com.mindpalace.app.ai.AiNightWorker
 import com.mindpalace.app.core.commands.NoteCommandHandler
-import com.mindpalace.app.core.db.MIGRATION_1_2
-import com.mindpalace.app.core.db.MIGRATION_2_3
+import com.mindpalace.app.core.db.ALL_MIGRATIONS
 import com.mindpalace.app.core.db.MindPalaceDatabase
 import com.mindpalace.app.core.reminders.NotificationHelper
 import com.mindpalace.app.export.NoteExporter
@@ -32,7 +31,7 @@ class AppContainer(context: Context) {
         MindPalaceDatabase.NAME,
     )
         .setDriver(BundledSQLiteDriver())
-        .addMigrations(MIGRATION_1_2, MIGRATION_2_3)
+        .addMigrations(*ALL_MIGRATIONS.toTypedArray())
         .build()
 
     val noteDao: com.mindpalace.app.core.db.NoteDao
