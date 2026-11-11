@@ -6,7 +6,7 @@ phases). **No INTERNET permission — enforced by a unit test.**
 
 **Owner:** Jason. **Plan:** see the Mind Palace build plan (§-references in code comments point at it).
 **Verified status:** Phase 0 complete + Phase 1 backend core; **27/27 unit tests green** locally
-(2026-11-08). On-phone Checkpoint 0 checklist below is the remaining gate.
+(2026-11-08). **Checkpoint 0 passed on-device (S26 Ultra) 2026-11-09** — see checklist below.
 
 ## Build & test (this Mac)
 
@@ -25,14 +25,16 @@ Terminal install (phone connected, USB debugging on):
 
 ## Checkpoint 0 — device checklist (Jason)
 
-- [ ] Installs and launches on the S26 Ultra.
-- [ ] Type a test note → Save → shows "Saved (rev 1)" and appears in the list.
-- [ ] Kill the app (swipe away + force stop) → reopen → note still there.
-- [ ] Reboot the phone → reopen → note still there (survives reboot).
-- [ ] From a browser/other app, Share text → "Save to Mind Palace" → toast; note appears in list
+- [x] Installs and launches on the S26 Ultra.
+- [x] Type a test note → Save → shows "Saved (rev 1)" and appears in the list.
+- [x] Kill the app (swipe away + force stop) → reopen → note still there.
+- [x] Reboot the phone → reopen → note still there (survives reboot).
+- [x] From a browser/other app, Share text → "Save to Mind Palace" → toast; note appears in list
       (share target is wired even though the full UI comes later).
-- [ ] Search box finds a word from any saved note (FTS5, on-device).
-- [ ] Airplane mode the whole time — nothing changes, ever.
+- [x] Search box finds a word from any saved note (FTS5, on-device).
+- [x] Airplane mode the whole time — nothing changes, ever.
+
+All 7/7 passed 2026-11-09.
 
 ## What's built vs. what's next
 

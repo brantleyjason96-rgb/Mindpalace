@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
  */
 
 /** How a note first entered the palace (§6 notes.source). */
-enum class NoteSource { TEXT, VOICE, PHOTO, SHARE }
+enum class NoteSource { TEXT, VOICE, PHOTO, SHARE, ATTACHMENT, INK }
 
 /** Lifecycle status of a note (§6 notes.status). */
 enum class NoteStatus { INBOX, ACTIVE, DONE, ARCHIVED }
@@ -72,8 +72,9 @@ sealed interface Origin {
 }
 
 /**
- * The six default categories (plan §2, "not yet confirmed; use these and make them editable").
- * Rule-keyword lists per category arrive in Phase 3, editable in Settings.
+ * The six starter categories (plan §2). Seeded into the `categories` table by MIGRATION_1_2
+ * (D20) — editable (add-only) from there on via Settings > Categories. This constant is now only
+ * the seed list, not the live source of truth; read `CategoryDao.observeAll()` for that.
  */
 val DEFAULT_CATEGORIES =
     listOf("Task/Errand", "Classroom", "Curriculum/Pacing", "App idea", "Personal", "Inbox")

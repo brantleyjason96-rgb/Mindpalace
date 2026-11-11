@@ -64,6 +64,14 @@ data class NoteEntity(
     @ColumnInfo(name = "ocr_text")
     val ocrText: String? = null,
 
+    /** App-private storage path for an ATTACHMENT-source note (D25); any file type, no preview. */
+    @ColumnInfo(name = "attachment_path")
+    val attachmentPath: String? = null,
+
+    /** Original display filename, kept only to show the user what they attached. */
+    @ColumnInfo(name = "attachment_file_name")
+    val attachmentFileName: String? = null,
+
     @ColumnInfo(name = "status")
     val status: NoteStatus,
 

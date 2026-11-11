@@ -5,6 +5,9 @@ import com.mindpalace.app.core.db.AuditEntity
 import com.mindpalace.app.core.db.DerivedEntity
 import com.mindpalace.app.core.db.MindPalaceDatabase
 import com.mindpalace.app.core.db.NoteEntity
+import com.mindpalace.app.core.db.PersonEntity
+import com.mindpalace.app.core.db.PlaceEntity
+import com.mindpalace.app.core.db.TopicEntity
 import com.mindpalace.app.core.model.AUDIT_ENTITY_NOTE
 import com.mindpalace.app.core.model.AuditAction
 import com.mindpalace.app.core.model.AuditActor
@@ -13,6 +16,10 @@ import com.mindpalace.app.core.model.DerivedField
 import com.mindpalace.app.core.model.NoteSnapshot
 import com.mindpalace.app.core.model.NoteStatus
 import com.mindpalace.app.core.model.Origin
+import com.mindpalace.app.core.model.ProposalKind
+import com.mindpalace.app.core.model.ProposalState
+import com.mindpalace.app.core.rules.RuleEngine
+import com.mindpalace.app.core.rules.toRule
 import kotlinx.serialization.json.Json
 import java.util.UUID
 
@@ -54,6 +61,8 @@ class NoteCommandHandler(
             transcript = request.transcript,
             imagePath = request.imagePath,
             ocrText = request.ocrText,
+            attachmentPath = request.attachmentPath,
+            attachmentFileName = request.attachmentFileName,
             status = NoteStatus.INBOX,
             revision = 1,
         )
@@ -80,8 +89,34 @@ class NoteCommandHandler(
                     at = at,
                 ),
             )
+            applyRules(note, at)
         }
         return note
+    }
+
+    /**
+     * Rules engine (D16): runs once, right after save, inside the same transaction. The first
+     * enabled rule whose keywords match the note's text sets an ADDITIONAL category derived fact
+     * (origin=rule:<id>), alongside the system Inbox default — it never overwrites or removes the
+     * default, so this step is safely re-runnable (idempotent) and never loses the system origin.
+     */
+    private suspend fun applyRules(note: NoteEntity, at: Long) {
+        val rules = database.ruleDao().enabled().mapNotNull { it.toRule() }
+        if (rules.isEmpty()) return
+        val searchableText = listOfNotNull(note.title, note.rawText, note.transcript, note.ocrText, note.attachmentFileName)
+            .joinToString(" ")
+        if (searchableText.isBlank()) return
+        val match = RuleEngine.firstMatch(rules, searchableText) ?: return
+        database.derivedDao().upsert(
+            DerivedEntity(
+                noteId = note.id,
+                field = DerivedField.CATEGORY,
+                value = match.action.category,
+                origin = Origin.RuleOrigin(match.id).encode(),
+                confidence = 1f,
+                createdAt = at,
+            ),
+        )
     }
 
     // ------------------------------------------------------ single-field edits
@@ -214,6 +249,67 @@ class NoteCommandHandler(
             rows
         }
         if (applied != 1) throw NoteConflictException(noteId)
+    }
+
+    // ------------------------------------------------------------ AI proposal review
+
+    /**
+     * Approving a PENDING proposal (CLAUDE.md rule 5: AI never edits notes directly — it only
+     * ever reaches the note through here, as an approved proposal). Writes the corresponding
+     * derived fact with origin=ai:<runId>; for TOPIC/PERSON/PLACE also registers the name in
+     * that vocabulary if it's new, the same insertIfAbsent pattern MainViewModel's manual
+     * add{Topic,Person,Place} already use, so it shows up in Vault immediately. Idempotent: a
+     * non-PENDING proposal is a no-op. Derived-fact writes aren't separately audited, matching
+     * the existing precedent in [create]/[applyRules] — only canonical note-field mutations go
+     * through the audit trail.
+     */
+    suspend fun approveProposal(proposalId: String) {
+        val proposal = database.proposalDao().byId(proposalId) ?: throw IllegalArgumentException("No proposal $proposalId")
+        if (proposal.state != ProposalState.PENDING) return
+        requireExisting(proposal.noteId)
+        val at = now()
+        val origin = Origin.AiOrigin(proposal.runId).encode()
+
+        database.withWriteTransaction {
+            when (proposal.kind) {
+                ProposalKind.CATEGORY -> database.derivedDao().upsert(
+                    DerivedEntity(proposal.noteId, DerivedField.CATEGORY, proposal.newValue, origin, proposal.confidence, at),
+                )
+                ProposalKind.TAG -> database.derivedDao().insertIfAbsent(
+                    DerivedEntity(proposal.noteId, DerivedField.TAG, proposal.newValue, origin, proposal.confidence, at),
+                )
+                ProposalKind.TOPIC -> {
+                    database.topicDao().insertIfAbsent(TopicEntity(id = newId(), name = proposal.newValue, createdAt = at, createdBy = "ai"))
+                    database.derivedDao().insertIfAbsent(
+                        DerivedEntity(proposal.noteId, DerivedField.TOPIC, proposal.newValue, origin, proposal.confidence, at),
+                    )
+                }
+                ProposalKind.PERSON -> {
+                    database.personDao().insertIfAbsent(PersonEntity(id = newId(), name = proposal.newValue, createdAt = at))
+                    database.derivedDao().insertIfAbsent(
+                        DerivedEntity(proposal.noteId, DerivedField.PERSON, proposal.newValue, origin, proposal.confidence, at),
+                    )
+                }
+                ProposalKind.PLACE -> {
+                    database.placeDao().insertIfAbsent(PlaceEntity(id = newId(), name = proposal.newValue, createdAt = at))
+                    database.derivedDao().insertIfAbsent(
+                        DerivedEntity(proposal.noteId, DerivedField.PLACE, proposal.newValue, origin, proposal.confidence, at),
+                    )
+                }
+                ProposalKind.DUE_DATE, ProposalKind.LINK -> {
+                    // The current GBNF grammar (AiPrompt.GRAMMAR) can never produce these kinds —
+                    // nothing creates a DUE_DATE/LINK proposal yet, so there's nothing to apply.
+                    // Revisit when the prompt/grammar actually grows these kinds.
+                    throw UnsupportedOperationException("Proposal kind ${proposal.kind} is not yet produced or applicable")
+                }
+            }
+            database.proposalDao().setState(proposal.id, ProposalState.APPROVED, at)
+        }
+    }
+
+    /** Rejecting a proposal never touches note data — just marks it so it stops being offered. */
+    suspend fun rejectProposal(proposalId: String) {
+        database.proposalDao().setState(proposalId, ProposalState.REJECTED, now())
     }
 
     // -------------------------------------------------------------------- undo

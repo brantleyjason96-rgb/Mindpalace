@@ -5,12 +5,20 @@ import androidx.room3.Room
 import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import androidx.test.core.app.ApplicationProvider
 import com.mindpalace.app.core.db.MindPalaceDatabase
+import com.mindpalace.app.core.db.ProposalEntity
 import com.mindpalace.app.core.model.AuditAction
 import com.mindpalace.app.core.model.AuditActor
 import com.mindpalace.app.core.model.CATEGORY_INBOX
 import com.mindpalace.app.core.model.DerivedField
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
+import com.mindpalace.app.core.model.ProposalKind
+import com.mindpalace.app.core.model.ProposalState
+import com.mindpalace.app.core.rules.Rule
+import com.mindpalace.app.core.rules.RuleAction
+import com.mindpalace.app.core.rules.RuleMatcher
+import com.mindpalace.app.core.rules.toEntity
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -154,6 +162,134 @@ class NoteCommandHandlerTest {
     }
 
     @Test
+    fun `a matching enabled rule adds a second category, alongside the system default`() = runTest {
+        val rule = Rule(
+            id = "r1",
+            version = 1,
+            enabled = true,
+            matcher = RuleMatcher(listOf("algebra")),
+            action = RuleAction("Classroom"),
+        )
+        db.ruleDao().upsert(rule.toEntity())
+
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "algebra quiz tomorrow"))
+
+        val derived = db.derivedDao().forNote(note.id)
+        assertEquals(2, derived.size)
+        assertTrue(derived.any { it.value == CATEGORY_INBOX && it.origin == "system" })
+        assertTrue(derived.any { it.value == "Classroom" && it.origin == "rule:r1" })
+    }
+
+    @Test
+    fun `a disabled rule never fires`() = runTest {
+        val rule = Rule(
+            id = "r1",
+            version = 1,
+            enabled = false,
+            matcher = RuleMatcher(listOf("algebra")),
+            action = RuleAction("Classroom"),
+        )
+        db.ruleDao().upsert(rule.toEntity())
+
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "algebra quiz tomorrow"))
+
+        assertEquals(1, db.derivedDao().forNote(note.id).size)
+    }
+
+    @Test
+    fun `a non-matching rule leaves only the system default category`() = runTest {
+        val rule = Rule(
+            id = "r1",
+            version = 1,
+            enabled = true,
+            matcher = RuleMatcher(listOf("geometry")),
+            action = RuleAction("Classroom"),
+        )
+        db.ruleDao().upsert(rule.toEntity())
+
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "buy oat milk"))
+
+        assertEquals(1, db.derivedDao().forNote(note.id).size)
+    }
+
+    @Test
+    fun `approving a PERSON proposal writes a derived fact and registers the person`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "Call Maya Lin tomorrow"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1",
+                noteId = note.id,
+                kind = ProposalKind.PERSON,
+                newValue = "Maya Lin",
+                evidenceQuote = "Maya Lin",
+                confidence = 0.9f,
+                runId = "run-1",
+                state = ProposalState.PENDING,
+                createdAt = clock,
+                updatedAt = clock,
+            ),
+        )
+
+        clock = 11_000
+        handler.approveProposal("p1")
+
+        assertEquals(ProposalState.APPROVED, db.proposalDao().byId("p1")!!.state)
+        val derived = db.derivedDao().forNote(note.id).single { it.field == DerivedField.PERSON }
+        assertEquals("Maya Lin", derived.value)
+        assertEquals("ai:run-1", derived.origin)
+        assertTrue("approved PERSON must register in the people vocabulary", db.personDao().observeAll().first().any { it.name == "Maya Lin" })
+    }
+
+    @Test
+    fun `approving a non-PENDING proposal is a no-op`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "note"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1",
+                noteId = note.id,
+                kind = ProposalKind.TAG,
+                newValue = "urgent",
+                evidenceQuote = "note",
+                confidence = 0.9f,
+                runId = "run-1",
+                state = ProposalState.REJECTED,
+                createdAt = clock,
+                updatedAt = clock,
+            ),
+        )
+
+        handler.approveProposal("p1")
+
+        assertEquals(ProposalState.REJECTED, db.proposalDao().byId("p1")!!.state)
+        assertTrue("a no-op approval must not write a derived fact", db.derivedDao().forNote(note.id).none { it.field == DerivedField.TAG })
+    }
+
+    @Test
+    fun `rejecting a proposal only changes its state`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "note"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1",
+                noteId = note.id,
+                kind = ProposalKind.TOPIC,
+                newValue = "Pacing",
+                evidenceQuote = "note",
+                confidence = 0.9f,
+                runId = "run-1",
+                state = ProposalState.PENDING,
+                createdAt = clock,
+                updatedAt = clock,
+            ),
+        )
+
+        handler.rejectProposal("p1")
+
+        assertEquals(ProposalState.REJECTED, db.proposalDao().byId("p1")!!.state)
+        assertEquals(0, db.derivedDao().forNote(note.id).count { it.field == DerivedField.TOPIC })
+        assertTrue(db.topicDao().observeAll().first().none { it.name == "Pacing" })
+    }
+
+    @Test
     fun `share-sourced note keeps source metadata`() = runTest {
         val req = ShareIngest.toRequest(
             text = "https://example.org/unit-3-pacing",
@@ -165,6 +301,41 @@ class NoteCommandHandlerTest {
         assertEquals("https://example.org/unit-3-pacing", note.sourceUrl)
         assertEquals("com.android.chrome", note.sourceApp)
         assertEquals("Unit 3 pacing", note.title)
+    }
+
+    @Test
+    fun `attachment-sourced note keeps the path and filename, and is rule-matchable by name`() = runTest {
+        val rule = Rule(
+            id = "r1",
+            version = 1,
+            enabled = true,
+            matcher = RuleMatcher(listOf("invoice")),
+            action = RuleAction("Finance"),
+        )
+        db.ruleDao().upsert(rule.toEntity())
+
+        val note = handler.create(
+            CreateNoteRequest(
+                source = NoteSource.ATTACHMENT,
+                attachmentPath = "/data/attachments/abc-invoice.pdf",
+                attachmentFileName = "invoice.pdf",
+            ),
+        )
+
+        assertEquals(NoteSource.ATTACHMENT, note.source)
+        assertEquals("/data/attachments/abc-invoice.pdf", note.attachmentPath)
+        assertEquals("invoice.pdf", note.attachmentFileName)
+
+        val derived = db.derivedDao().forNote(note.id)
+        assertTrue("filename must be searchable by the rule engine", derived.any { it.value == "Finance" && it.origin == "rule:r1" })
+    }
+
+    @Test
+    fun `an attachment with no other content is still a valid capture`() = runTest {
+        val note = handler.create(
+            CreateNoteRequest(source = NoteSource.ATTACHMENT, attachmentPath = "/data/attachments/x.pdf", attachmentFileName = "x.pdf"),
+        )
+        assertEquals("x.pdf", db.noteDao().byId(note.id)?.attachmentFileName)
     }
 }
 

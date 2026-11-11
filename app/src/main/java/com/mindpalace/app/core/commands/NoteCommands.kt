@@ -14,6 +14,8 @@ data class CreateNoteRequest(
     val transcript: String? = null,
     val ocrText: String? = null,   // Phase 2
     val imagePath: String? = null, // Phase 2 — path inside app-private storage
+    val attachmentPath: String? = null, // D25 — path inside app-private storage
+    val attachmentFileName: String? = null, // D25 — original display name, for NoteCard only
     val sourceApp: String? = null,
     val sourceUrl: String? = null,
 ) {
@@ -22,6 +24,7 @@ data class CreateNoteRequest(
         !rawText.isNullOrBlank() ||
             !transcript.isNullOrBlank() ||
             !ocrText.isNullOrBlank() ||
+            !attachmentPath.isNullOrBlank() ||
             !title.isNullOrBlank()
 }
 
