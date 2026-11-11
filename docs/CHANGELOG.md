@@ -2,6 +2,19 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 14: migration test framework
+
+### Added
+- `core/db/ALL_MIGRATIONS` — the single list `AppContainer` and every test register migrations
+  through; nothing else does.
+- `MigrationFixtures` (test-only) and seven new `MigrationTest` cases covering a full 1→latest
+  migration with data in every table, FTS surviving migration (both old-text search and
+  post-migration inserts), a real `Room.databaseBuilder` opening a migrated file, migration-list
+  contiguity, schema-file presence, and a source-wide check that destructive fallback is never
+  configured.
+
+### Test count: 122 (was 115). See `docs/TEST_RESULTS.md`.
+
 ## Unreleased — 2026-11-11 — Plan 01 step 1e: docs brought up to date (closes plan 01)
 
 ### Changed

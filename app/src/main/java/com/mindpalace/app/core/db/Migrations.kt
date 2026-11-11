@@ -29,3 +29,8 @@ val MIGRATION_2_3 = object : Migration(2, 3) {
         connection.execSQL("ALTER TABLE notes ADD COLUMN attachment_file_name TEXT")
     }
 }
+
+/** Every migration, in order (plan 14 G4). `AppContainer` and every test use this list —
+ *  nothing else — so a new migration can never be written and then forgotten at the registration
+ *  point (the app would otherwise crash on upgrade with "no migration found"). */
+val ALL_MIGRATIONS: List<Migration> = listOf(MIGRATION_1_2, MIGRATION_2_3)

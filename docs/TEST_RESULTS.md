@@ -1,5 +1,19 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 14 (migration test framework) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
+**Result:** `BUILD SUCCESSFUL` — **122 tests (was 115, +7), 0 failures, 0 errors, 2 skipped**
+(same two pre-existing `@Ignore`d bug records). `assembleDebug` also green. No schema change.
+
+Added (D33 in `docs/DECISIONS.md`): `ALL_MIGRATIONS` as the single migration-registration point;
+`MigrationFixtures` (seeds one row per schema-v1 table, raw SQL); and seven tests —
+migrating 1→latest keeps every row and the original text verbatim, FTS still finds pre-migration
+text and passes an integrity check, FTS triggers fire for a post-migration insert, a real
+`Room.databaseBuilder` opens the migrated file, the migration list is contiguous and current, a
+schema file exists for every version, and `fallbackToDestructiveMigration` appears nowhere in the
+source.
+
 ## 2026-11-11 — Plan 01 step 1e (stale docs brought up to date) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
