@@ -1,5 +1,10 @@
 # Mind Palace
 
+> **Working on this repo?** Start at [`docs/plans/INDEX.md`](docs/plans/INDEX.md) (work queue,
+> order, owner decisions) and [`CLAUDE.md`](CLAUDE.md) (rules). The audit of the current code is
+> [`docs/plans/01-audit-punch-list.md`](docs/plans/01-audit-punch-list.md). Parts of this README
+> below still describe version 0.1 and are due to be rewritten (plan 01 step 1e).
+
 Personal capture app: speak, type, or share something → saved instantly (save-first), sorted later
 by plain rules, resurfaced at the right time, with a fully **on-device, offline** AI pass (later
 phases). **No INTERNET permission — enforced by a unit test.**

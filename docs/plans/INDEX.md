@@ -1,15 +1,14 @@
 # Plans index — handoff package
 
 **Written:** 2026-11-11, against branch `claude/happy-fermi-begmf3` at `d851331`
-(versionCode 5, schema v3), merged into `claude/great-faraday-ujgjnd`.
+(versionCode 5, schema v3). That code and these plans are now on `main`.
 **Who does what:** the planning model wrote these files. A faster model executes one plan step at
 a time. The owner answers the decisions in §3 and runs device checks. The planning model or the
 owner runs the review gate (`REVIEW_GATES.md`) before each merge.
 
 ## 0. Read this first: the brief was written against an older app
 
-The task list (`docs/PLANNING_TASKS.md` on branch `claude/wizardly-turing-lonjjg`) describes
-`main`: 27 tests, no UI, zero permissions. The working branch is fourteen commits ahead. What
+The task list (`docs/PLANNING_TASKS.md`) describes the app as it was on `main` on 2026-11-08: 27 tests, no UI, zero permissions. The code has moved on by fourteen commits since. What
 changed for the plans:
 
 | Brief said | Actual state | Effect on the plan |
@@ -143,7 +142,7 @@ Read first, in this order:
   3. docs/plans/<NN-plan-file>.md   — you are doing: <step id and name, e.g. "plan 01 step 1b">
   4. docs/plans/REVIEW_GATES.md
 
-Branch: create <branch name> from <base branch>. Do not open a pull request unless asked.
+Branch: create <branch name> from main. Do not open a pull request unless asked.
 
 Rules:
   - Change only the files listed under "Files allowed" in the plan (plus tests it names).

@@ -1,6 +1,38 @@
 # Mind Palace — brief for Claude Code
 
-Read this first. Then read `README.md`, `docs/DECISIONS.md` (D1–D14), and `docs/TEST_RESULTS.md`.
+## Start here (updated 2026-11-11)
+
+**If you are an agent picking up work, read these in order:**
+
+1. This file — the rules below are binding.
+2. **`docs/plans/INDEX.md`** — what to do next, in what order, which steps need the owner's
+   sign-off first, and the prompt template for executing one plan step.
+3. The one plan file for your step (`docs/plans/NN-*.md`). Each lists the files you may change,
+   the tests to write, a "done when" check, and when to stop and report.
+4. `docs/plans/REVIEW_GATES.md` — the checklist to fill in before anything is merged.
+
+| Looking for | Go to |
+|---|---|
+| What is broken or risky right now | `docs/plans/01-audit-punch-list.md` |
+| Which tests are missing | `docs/plans/02-missing-tests.md` |
+| What `§3.7`, `§6`, … in code comments mean | `docs/PLAN.md` |
+| Why something was decided | `docs/DECISIONS.md` (latest is D26; **next ID: D27**) |
+| Which permissions are approved | `docs/PERMISSIONS.md` |
+| How to check the app on the phone | `docs/CHECKPOINT_0.md`, `scripts/checkpoint0.sh` |
+| CI | `.github/workflows/android.yml`, `docs/plans/06-ci.md` |
+| The owner's feature wish lists | `docs/FEATURE_GAP_PLAN.md`, `docs/CAPTURE_GRAFT_PLAN.md` |
+| The original planning brief | `docs/PLANNING_TASKS.md` |
+
+**You cannot build this app in a Claude cloud session** (no Android SDK; Google's Maven host is
+blocked). Push and read the "Android build" GitHub Actions run instead.
+
+**Parts of this file below are out of date.** They are kept until plan 01 step 1e rewrites them.
+Where they disagree with the table here or with `docs/plans/INDEX.md`, the newer text wins:
+- The app is at schema **v3**, versionCode 5, with **49** unit tests, all passing in CI.
+- The UI **has** been compiled and runs on the phone. Most of "Screens still to build" is built.
+- Current code is on **`main`** (it includes everything from `claude/happy-fermi-begmf3`).
+
+Then read `README.md`, `docs/DECISIONS.md` (D1–D26), and `docs/TEST_RESULTS.md`.
 
 ## What this is
 Personal Android capture app for Jason (8th-grade Earth Science teacher). Speak, type, share, or
@@ -23,7 +55,7 @@ the right time → plus an **on-device, offline** AI pass at night. Kotlin, Jetp
    handler with origin `ai:<run>`. Rules apply with origin `rule:<id>`.
 6. Any Room schema change = version bump + committed schema JSON + a migration test.
 7. Enums persist by name — never rename a constant; add and migrate.
-8. Record each non-obvious choice in `docs/DECISIONS.md` (next ID: D15).
+8. Record each non-obvious choice in `docs/DECISIONS.md` (next ID: D27).
 
 ## Current state (verify, don't trust)
 - Phase 0 + Phase 1 backend: schema v1 (all tables, FTS5), command handler, share target, exports.
@@ -42,7 +74,7 @@ export JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home"
 ./gradlew testDebugUnitTest     # must stay green
 ./gradlew assembleDebug         # APK in app/build/outputs/apk/debug/
 ```
-Work on branch `claude/happy-fermi-begmf3`. Commit in small steps. Don't open PRs unless asked.
+Branch from `main` for each plan step. Commit in small steps. Don't open PRs unless asked.
 
 ## Screens still to build (in this order)
 1. **Note detail/edit** — full text, edit with undo, status change, category/tags/links, audit history.
