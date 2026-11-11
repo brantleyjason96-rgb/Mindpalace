@@ -2,8 +2,12 @@ package com.mindpalace.app
 
 // ============================================================================
 // Main screen (polished capture + browse). Backend contract used:
-//   container.commands (ONLY writer), container.database.noteDao() (Flow reads + FTS search).
-// The UI never touches DAOs for writes. Delete = soft delete, Undo = restore (audited, §3.2).
+//   container.commands (ONLY writer of canonical note data), container.database.noteDao()
+//   (Flow reads + FTS search). Delete = soft delete, Undo = restore (audited, §3.2).
+// NOT fully true yet (plan 01 W1, tracked, not fixed): several vocabulary/rules/reminder writes
+// in MainViewModel go straight through DAOs (addTopic/addPerson/addPlace/addLink/addReminder/
+// cancelReminder/completeReminder/setRuleEnabled/addRule/deleteRule) — none of those are audited
+// or undoable. Canonical NOTE fields (text/title/status/delete) do go through NoteCommandHandler.
 // ============================================================================
 
 import android.Manifest

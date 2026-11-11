@@ -2,6 +2,17 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 01 step 1e: docs brought up to date (closes plan 01)
+
+### Changed
+- `CLAUDE.md` and `README.md` rewritten to describe the app as it actually is (UI built and
+  running, schema v3, versionCode 5/0.5.0, 115 tests) instead of the 2026-11-08 snapshot.
+- `docs/DECISIONS.md`'s D14–D23 reordered to ascending (pure reorder, no content change).
+- `MainActivity.kt`'s file header comment corrected (it claimed the UI never writes via DAOs,
+  which plan 01's W1 finding shows isn't true yet).
+
+Plan 01 (the audit-and-hardening punch list) is now fully executed, steps 1a through 1e.
+
 ## Unreleased — 2026-11-11 — Plan 01 step 1d: crash handling, revert safety, note-detail load, stale swipe
 
 ### Fixed

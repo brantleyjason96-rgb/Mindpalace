@@ -1,5 +1,19 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 01 step 1e (stale docs brought up to date) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
+**Result:** `BUILD SUCCESSFUL` — **115 tests (unchanged), 0 failures, 0 errors, 2 skipped**.
+`assembleDebug` also green.
+
+Docs-only step (plan 01 Z1): `CLAUDE.md` and `README.md` rewritten to describe the app as it
+actually is now (UI built and running, schema v3, versionCode 5/0.5.0, 115 tests, D31 latest/
+next D32) instead of the 2026-11-08 snapshot they still described. `docs/DECISIONS.md`'s D14–D23
+entries reordered to ascending (they were written out of order as decisions landed); no content
+changed, pure reorder. `MainActivity.kt`'s file header comment corrected — it claimed "the UI
+never touches DAOs for writes," which plan 01's W1 finding shows isn't true for several
+vocabulary/rules/reminder writes.
+
 ## 2026-11-11 — Plan 01 step 1d device check — PASSED (SM-S948U, installed over existing app)
 
 All four manual checks passed: command-error snackbar, revert-with-unsaved-edits confirmation,
