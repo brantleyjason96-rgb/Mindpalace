@@ -103,4 +103,20 @@ Do this instead:
 ## Feature checks
 
 Each executed plan adds its own short device checks here, under a heading for that feature
-(see the "Device check" section of the plan). None have been added yet.
+(see the "Device check" section of the plan).
+
+### Reliable time reminders (plan 11 Part A, 2026-11-11)
+
+1. Set a reminder a few minutes ahead; lock the phone → notification arrives with the note's
+   text, posted exactly once. **PASS** (SM-S948U, 2026-11-11: set for 4 minutes out, fired while
+   locked, correct text "checkpoint share verify", `numPostedByApp=1`).
+2. Power the phone off with a reminder still pending; power on → notification arrives after boot
+   without opening the app. **Not run this pass** — needs a live reboot with a pending reminder
+   timed around it; do on the next device session that touches this path.
+3. Turn off "Alarms & reminders" for Mind Palace in system settings; set a reminder → the app
+   offers approximate timing; it fires within about 15 minutes. **Not run this pass** — needs the
+   UI half (plan 11 Part A's picker/permission-recheck work), not yet built.
+4. Schema v3 → v4 migration preserves existing data. **PASS** (SM-S948U, 2026-11-11: installed
+   over the existing app, pre-existing note and its full revision history intact after upgrade).
+5. Notification uses a real icon, not a blank square. **PASS** (SM-S948U, 2026-11-11: confirmed
+   visually in the notification shade).

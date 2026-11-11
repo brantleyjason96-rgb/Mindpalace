@@ -1,5 +1,14 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 11 Part A device check — PASSED (SM-S948U, installed over existing app)
+
+A reminder set ~4 minutes out fired correctly while the phone was locked (correct note text,
+posted exactly once per `dumpsys notification`); the v3→v4 migration preserved the existing
+note and its full revision history; the notification icon renders as a real glyph, not a blank
+square. Two of the plan's five device checks (reboot catch-up; inexact fallback when exact
+alarms are off) weren't run this pass — see `docs/CHECKPOINT_0.md`'s "Reliable time reminders"
+section for what's still open. Merged to `main` (`9504f63`).
+
 ## 2026-11-11 — Plan 11 Part A, backend half (reliable time reminders) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
