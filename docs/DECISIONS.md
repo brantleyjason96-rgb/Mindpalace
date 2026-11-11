@@ -657,3 +657,48 @@ Verified locally: `./gradlew testDebugUnitTest assembleDebug` — 138 tests (was
 the new receiver needs no permission. `versionCode`/`versionName` bumped to 6/0.6.0 (D12) in
 `app/build.gradle.kts`, outside this part's nominal file list but required by that policy on any
 schema change — same precedent as earlier necessary out-of-scope touches this session.
+
+## D35 — Plan 11 Part A (UI half): date-picker checks, Due/Snooze section, notification actions
+Nov 11, 2026. Closes the remaining R1 items from `docs/plans/01-audit-punch-list.md` that D34's
+backend unit explicitly deferred — all within step's files-allowed scope
+(`MainViewModel`/`ReminderSection`/`RemindersScreen` in `MainActivity.kt`, `core/reminders/*`,
+`strings.xml`): no out-of-scope touches needed this time.
+
+**R1#1 (UI half):** the notification-permission callback used to jump straight to the date picker
+(`showDatePicker = true`), skipping the exact-alarm check entirely if permission was just granted.
+It now calls `startAddReminder()` again, so both checks always run regardless of path. The
+exact-alarm explainer's second button ("Use approximate timing") now actually proceeds to the
+picker instead of only offering "Open Settings" — `ReminderCommands`/`ReminderPlanner` already
+fall back to an inexact alarm automatically when exact scheduling isn't allowed (D34), so there
+was nothing more to wire up here.
+
+**R1#2 (UI half):** the time picker now rejects a time under `REMINDER_MIN_LEAD_MILLIS` (30s) away
+with an inline error message instead of silently calling `addReminder` and surfacing a generic
+"Something went wrong" snackbar from the backend's `IllegalArgumentException`.
+
+**R1#9:** `ReminderSection` and `RemindersScreen` both format times with
+`DateFormat.getBestDateTimePattern` (respects the system's 12/24-hour setting) instead of a fixed
+`"EEE, MMM d, h:mm a"` pattern, reading `reminder.fireAt` directly instead of re-parsing `spec` —
+the raw ISO string is no longer shown as a fallback.
+
+**Due section + Snooze:** reminders split into "Due" (fired) and "Upcoming" in both screens; a Due
+row offers Snooze (1h / tomorrow 8am, via a new `MainViewModel.snoozeReminder` →
+`ReminderCommands.snooze`) instead of Cancel. A new shared `ReminderRow` composable backs both
+screens' lists (`RemindersScreen`'s subtitle slot carries the clickable note snippet it already
+had).
+
+**Notification actions:** "Mark done" and "Snooze 1h" are now real notification action buttons
+(`NotificationCompat.Builder.addAction`), handled by `ReminderAlarmReceiver` via a new
+`EXTRA_NOTIFICATION_ACTION` extra — resolved without ever opening the app. `NotificationHelper`
+gained `cancel(context, reminderId)` so both actions dismiss the notification once handled.
+
+Verified on-device (SM-S948U, installed over the existing app): past-time rejection shows the
+inline error and keeps the dialog open; a valid time saves and displays with correct locale
+formatting ("Wed, Nov 11, 6:55 PM"); the reminder fired with both action buttons present; tapping
+"Snooze 1h" directly from the notification (screen locked, app not opened) re-armed it exactly
++1h with `fired_at` cleared, confirmed by reopening the app afterward. `./gradlew
+testDebugUnitTest assembleDebug` — 138 tests (unchanged — no Compose UI test library exists yet),
+0 failures. No schema change.
+
+This closes plan 11 Part A (both halves). Part B (geofenced place reminders) and Part C (calendar
+read) each need their own owner sign-off before starting (`docs/plans/INDEX.md` SO-B1–B3, SO-C1).

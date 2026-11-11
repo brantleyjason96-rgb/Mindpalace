@@ -16,6 +16,12 @@ import com.mindpalace.app.R
 const val REMINDER_CHANNEL_ID = "reminders"
 const val EXTRA_OPEN_NOTE_ID = "open_note_id"
 
+/** Carries which notification action button was tapped (plan 11 Part A) — read by
+ *  [ReminderAlarmReceiver], which also handles the original alarm firing (no extra = fire). */
+const val EXTRA_NOTIFICATION_ACTION = "notification_action"
+const val ACTION_MARK_DONE = "mark_done"
+const val ACTION_SNOOZE_1H = "snooze_1h"
+
 object NotificationHelper {
 
     fun createChannel(context: Context) {
@@ -27,7 +33,8 @@ object NotificationHelper {
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
 
-    /** Tapping the notification opens the note it was set on. */
+    /** Tapping the notification opens the note it was set on; "Mark done"/"Snooze 1h" action
+     *  buttons are handled by [ReminderAlarmReceiver] without opening the app (plan 11 Part A). */
     fun show(context: Context, reminderId: String, noteId: String, text: String) {
         if (ContextCompat.checkSelfPermission(context, Manifest.permission.POST_NOTIFICATIONS) !=
             PackageManager.PERMISSION_GRANTED
@@ -52,7 +59,26 @@ object NotificationHelper {
             .setContentIntent(pendingIntent)
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .addAction(0, context.getString(R.string.reminder_mark_done), actionPendingIntent(context, reminderId, ACTION_MARK_DONE))
+            .addAction(0, context.getString(R.string.reminder_snooze_1h), actionPendingIntent(context, reminderId, ACTION_SNOOZE_1H))
             .build()
         NotificationManagerCompat.from(context).notify(reminderId.hashCode(), notification)
+    }
+
+    fun cancel(context: Context, reminderId: String) {
+        NotificationManagerCompat.from(context).cancel(reminderId.hashCode())
+    }
+
+    private fun actionPendingIntent(context: Context, reminderId: String, action: String): PendingIntent {
+        val intent = Intent(context, ReminderAlarmReceiver::class.java).apply {
+            putExtra(EXTRA_REMINDER_ID, reminderId)
+            putExtra(EXTRA_NOTIFICATION_ACTION, action)
+        }
+        return PendingIntent.getBroadcast(
+            context,
+            (reminderId + action).hashCode(),
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+        )
     }
 }
