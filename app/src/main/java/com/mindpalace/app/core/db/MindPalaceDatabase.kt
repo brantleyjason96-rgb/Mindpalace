@@ -30,7 +30,7 @@ import androidx.room3.RoomDatabase
         AuditEntity::class,
         JobEntity::class,
     ],
-    version = 2,
+    version = 3,
     exportSchema = true,
 )
 abstract class MindPalaceDatabase : RoomDatabase() {

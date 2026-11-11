@@ -108,6 +108,11 @@ interface NoteDao {
     suspend fun searchLike(q: String, limit: Int): List<NoteEntity>
 }
 
+/** One row of [DerivedDao.observeCountsByField] — how many distinct notes carry a given value
+ *  for a field (e.g. how many notes are filed under each category). Column names must match
+ *  the query's aliases exactly for Room to map this without `@Embedded`. */
+data class FieldValueCount(val value: String, val count: Int)
+
 @Dao
 interface DerivedDao {
 
@@ -128,6 +133,11 @@ interface DerivedDao {
 
     @Query("SELECT COUNT(*) FROM derived")
     suspend fun count(): Int
+
+    /** Vault per-notebook/entity note counts (Phase 2) — distinct note count per value for one
+     *  derived field, e.g. how many notes are filed under each category. */
+    @Query("SELECT value, COUNT(DISTINCT note_id) AS count FROM derived WHERE field = :field GROUP BY value")
+    fun observeCountsByField(field: DerivedField): Flow<List<FieldValueCount>>
 }
 
 @Dao
@@ -292,6 +302,10 @@ interface ProposalDao {
     @Query("SELECT * FROM proposals WHERE state = :state ORDER BY created_at ASC LIMIT :limit")
     suspend fun byState(state: ProposalState, limit: Int): List<ProposalEntity>
 
+    /** For the Proposals review screen — live, not a one-shot read like [byState]. */
+    @Query("SELECT * FROM proposals WHERE state = :state ORDER BY created_at ASC")
+    fun observeByState(state: ProposalState): Flow<List<ProposalEntity>>
+
     @Query("SELECT COUNT(*) FROM proposals WHERE state = :state")
     suspend fun countByState(state: ProposalState): Int
 
@@ -316,6 +330,10 @@ interface AiRunDao {
 
     @Query("SELECT * FROM ai_runs ORDER BY started DESC LIMIT :limit")
     fun observeRecent(limit: Int): Flow<List<AiRunEntity>>
+
+    /** Drives [com.mindpalace.app.ai.AiNightWorker]'s `since` — null means "process everything". */
+    @Query("SELECT MAX(finished) FROM ai_runs WHERE outcome = 'SUCCEEDED'")
+    suspend fun lastSucceededFinishedAt(): Long?
 }
 
 @Dao

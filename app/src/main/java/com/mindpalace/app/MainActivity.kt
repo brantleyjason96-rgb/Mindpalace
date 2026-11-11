@@ -47,8 +47,11 @@ import androidx.compose.animation.shrinkVertically
 import androidx.compose.animation.slideInHorizontally
 import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.horizontalScroll
@@ -88,6 +91,8 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.NavigationBar
+import androidx.compose.material3.NavigationBarItem
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
@@ -115,12 +120,24 @@ import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.layout.offset
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.layout.onSizeChanged
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.input.pointer.PointerType
+import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChanged
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalHapticFeedback
@@ -158,18 +175,37 @@ import com.mindpalace.app.core.db.PersonDao
 import com.mindpalace.app.core.db.PersonEntity
 import com.mindpalace.app.core.db.PlaceDao
 import com.mindpalace.app.core.db.PlaceEntity
+import com.mindpalace.app.core.db.AiRunDao
+import com.mindpalace.app.core.db.AuditDao
+import com.mindpalace.app.core.db.DerivedDao
+import com.mindpalace.app.core.db.AiRunEntity
+import com.mindpalace.app.core.db.AuditEntity
+import com.mindpalace.app.core.db.DerivedEntity
+import com.mindpalace.app.core.db.FieldValueCount
+import com.mindpalace.app.core.db.ProposalDao
+import com.mindpalace.app.core.db.ProposalEntity
 import com.mindpalace.app.core.db.ReminderDao
 import com.mindpalace.app.core.db.ReminderEntity
 import com.mindpalace.app.core.db.RuleDao
 import com.mindpalace.app.core.db.RuleEntity
 import com.mindpalace.app.core.db.TopicDao
 import com.mindpalace.app.core.db.TopicEntity
+import com.mindpalace.app.core.model.AUDIT_ENTITY_NOTE
+import com.mindpalace.app.core.model.AuditAction
+import com.mindpalace.app.core.model.AuditActor
+import com.mindpalace.app.core.model.DerivedField
 import com.mindpalace.app.core.model.LinkState
 import com.mindpalace.app.core.model.LinkType
+import com.mindpalace.app.core.model.NoteSnapshot
 import com.mindpalace.app.core.model.NoteSource
 import com.mindpalace.app.core.model.NoteStatus
+import com.mindpalace.app.core.model.Origin
+import com.mindpalace.app.core.model.ProposalKind
+import com.mindpalace.app.core.model.ProposalState
 import com.mindpalace.app.core.model.ReminderState
 import com.mindpalace.app.core.model.ReminderType
+import com.mindpalace.app.core.ink.InkRecognitionEngine
+import com.mindpalace.app.core.ink.InkStroke
 import com.mindpalace.app.core.ocr.OcrEngine
 import com.mindpalace.app.core.reminders.AlarmScheduler
 import com.mindpalace.app.core.reminders.EXTRA_OPEN_NOTE_ID
@@ -182,9 +218,15 @@ import com.mindpalace.app.core.rules.RuleMatcher
 import com.mindpalace.app.core.rules.toEntity
 import com.mindpalace.app.core.rules.toRule
 import com.mindpalace.app.export.NoteExporter
+import com.mindpalace.app.ui.AttachFileIcon
 import com.mindpalace.app.ui.CameraIcon
 import com.mindpalace.app.ui.CircleIconButton
+import com.mindpalace.app.ui.ClockTabIcon
 import com.mindpalace.app.ui.MicIcon
+import com.mindpalace.app.ui.NoteTabIcon
+import com.mindpalace.app.ui.PenIcon
+import com.mindpalace.app.ui.ShieldTabIcon
+import com.mindpalace.app.ui.VaultTabIcon
 import com.mindpalace.app.ui.rememberPressScale
 import com.mindpalace.app.ui.theme.MindPalaceTheme
 import com.mindpalace.app.ui.theme.ThemeMode
@@ -200,9 +242,11 @@ import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.mapLatest
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.serialization.json.Json
 import java.io.File
 import java.util.UUID
 
@@ -212,6 +256,7 @@ class MainViewModel(
     private val exporter: NoteExporter,
     private val exportDir: File,
     val photosDir: File,
+    val attachmentsDir: File,
 ) : ViewModel() {
 
     private val noteDao: NoteDao = database.noteDao()
@@ -222,6 +267,37 @@ class MainViewModel(
     private val placeDao: PlaceDao = database.placeDao()
     private val noteLinkDao: NoteLinkDao = database.noteLinkDao()
     private val reminderDao: ReminderDao = database.reminderDao()
+    private val proposalDao: ProposalDao = database.proposalDao()
+    private val aiRunDao: AiRunDao = database.aiRunDao()
+    private val auditDao: AuditDao = database.auditDao()
+    private val derivedDao: DerivedDao = database.derivedDao()
+
+    /** Revision history for the Thought Detail screen — newest first, same order the audit
+     *  table is already queried in. */
+    fun auditForNote(noteId: String): Flow<List<AuditEntity>> =
+        auditDao.observeRecentFor(AUDIT_ENTITY_NOTE, noteId, limit = 50)
+
+    /** Current derived facts (category/tag/person/place/topic) for the Thought Detail screen's
+     *  "why was this filed here" explanation. */
+    fun derivedForNote(noteId: String): Flow<List<DerivedEntity>> = derivedDao.observeForNote(noteId)
+
+    /** AI run history (CLAUDE.md backlog) — most recent night-loop runs, newest first. */
+    val aiRuns: StateFlow<List<AiRunEntity>> =
+        aiRunDao.observeRecent(50).stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val pendingProposals: StateFlow<List<ProposalEntity>> =
+        proposalDao.observeByState(ProposalState.PENDING)
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Review (CLAUDE.md "AI: Proposals review") — applies through the command handler, same
+     *  save-first contract as every other mutation; never writes the note directly. */
+    fun approveProposal(id: String) {
+        viewModelScope.launch { commands.approveProposal(id) }
+    }
+
+    fun rejectProposal(id: String) {
+        viewModelScope.launch { commands.rejectProposal(id) }
+    }
 
     val rules: StateFlow<List<RuleEntity>> =
         ruleDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -244,6 +320,29 @@ class MainViewModel(
 
     val places: StateFlow<List<PlaceEntity>> =
         placeDao.observeAll().stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    /** Vault per-notebook/entity note counts (Phase 2), keyed by name/value. Only non-zero once
+     *  a rule (categories) or an approved AI proposal (topics/people/places) has actually filed
+     *  a note under that value — an honest reflection of what's wired today, not a guess. */
+    val categoryNoteCounts: StateFlow<Map<String, Int>> =
+        derivedDao.observeCountsByField(DerivedField.CATEGORY)
+            .map { counts -> counts.associate { it.value to it.count } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val topicNoteCounts: StateFlow<Map<String, Int>> =
+        derivedDao.observeCountsByField(DerivedField.TOPIC)
+            .map { counts -> counts.associate { it.value to it.count } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val personNoteCounts: StateFlow<Map<String, Int>> =
+        derivedDao.observeCountsByField(DerivedField.PERSON)
+            .map { counts -> counts.associate { it.value to it.count } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val placeNoteCounts: StateFlow<Map<String, Int>> =
+        derivedDao.observeCountsByField(DerivedField.PLACE)
+            .map { counts -> counts.associate { it.value to it.count } }
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
 
     fun addTopic(name: String) {
         viewModelScope.launch {
@@ -454,6 +553,36 @@ class MainViewModel(
         }
     }
 
+    /** Same save-first contract, source=INK (D26): reuses PHOTO's exact shape — the rendered
+     *  stroke drawing via [imagePath], recognized text via [ocrText] — rather than new columns,
+     *  since it's the same "an image + its recognized text" data. Review step (recognize → edit)
+     *  happens in HandwritingCaptureScreen, same as Photo's OCR review. */
+    fun captureInk(imagePath: String, recognizedText: String, onSaved: (noteId: String) -> Unit) {
+        viewModelScope.launch {
+            val note = commands.create(
+                CreateNoteRequest(source = NoteSource.INK, imagePath = imagePath, ocrText = recognizedText.ifBlank { null }),
+            )
+            justSavedId.value = note.id
+            onSaved(note.id)
+            delay(SETTLE_ANIMATION_MS)
+            if (justSavedId.value == note.id) justSavedId.value = null
+        }
+    }
+
+    /** Same save-first contract, source=ATTACHMENT (D25): no review step — a copied file has
+     *  nothing to correct before saving, unlike Voice/Photo's transcript/OCR text. */
+    fun captureAttachment(path: String, fileName: String, onSaved: (noteId: String) -> Unit) {
+        viewModelScope.launch {
+            val note = commands.create(
+                CreateNoteRequest(source = NoteSource.ATTACHMENT, attachmentPath = path, attachmentFileName = fileName),
+            )
+            justSavedId.value = note.id
+            onSaved(note.id)
+            delay(SETTLE_ANIMATION_MS)
+            if (justSavedId.value == note.id) justSavedId.value = null
+        }
+    }
+
     fun delete(noteId: String) {
         viewModelScope.launch {
             commands.softDelete(noteId)
@@ -482,6 +611,7 @@ class MainViewModel(
                         container.exporter,
                         container.exportDir,
                         container.photosDir,
+                        container.attachmentsDir,
                     ) as T
             }
     }
@@ -494,6 +624,7 @@ private sealed interface AppScreen {
     data object Main : AppScreen
     data object VoiceCapture : AppScreen
     data object PhotoCapture : AppScreen
+    data object HandwritingCapture : AppScreen
     data object Trash : AppScreen
     data object Rules : AppScreen
     data object Categories : AppScreen
@@ -501,6 +632,9 @@ private sealed interface AppScreen {
     data object People : AppScreen
     data object Places : AppScreen
     data object Reminders : AppScreen
+    data object AiProposals : AppScreen
+    data object AiSetup : AppScreen
+    data object AiRunHistory : AppScreen
     data object Settings : AppScreen
     data class NoteDetail(val noteId: String) : AppScreen
 }
@@ -533,11 +667,15 @@ class MainActivity : ComponentActivity() {
             var showTrash by rememberSaveable { mutableStateOf(false) }
             var showRules by rememberSaveable { mutableStateOf(false) }
             var showPhotoCapture by rememberSaveable { mutableStateOf(false) }
+            var showHandwritingCapture by rememberSaveable { mutableStateOf(false) }
             var showTopics by rememberSaveable { mutableStateOf(false) }
             var showPeople by rememberSaveable { mutableStateOf(false) }
             var showPlaces by rememberSaveable { mutableStateOf(false) }
             var showReminders by rememberSaveable { mutableStateOf(false) }
             var showCategories by rememberSaveable { mutableStateOf(false) }
+            var showAiProposals by rememberSaveable { mutableStateOf(false) }
+            var showAiSetup by rememberSaveable { mutableStateOf(false) }
+            var showAiRunHistory by rememberSaveable { mutableStateOf(false) }
 
             val pendingNoteId by pendingOpenNoteId
             LaunchedEffect(pendingNoteId) {
@@ -553,6 +691,7 @@ class MainActivity : ComponentActivity() {
             val screen: AppScreen = when {
                 showVoiceCapture -> AppScreen.VoiceCapture
                 showPhotoCapture -> AppScreen.PhotoCapture
+                showHandwritingCapture -> AppScreen.HandwritingCapture
                 showTrash -> AppScreen.Trash
                 showRules -> AppScreen.Rules
                 showCategories -> AppScreen.Categories
@@ -560,6 +699,9 @@ class MainActivity : ComponentActivity() {
                 showPeople -> AppScreen.People
                 showPlaces -> AppScreen.Places
                 showReminders -> AppScreen.Reminders
+                showAiProposals -> AppScreen.AiProposals
+                showAiSetup -> AppScreen.AiSetup
+                showAiRunHistory -> AppScreen.AiRunHistory
                 showSettings -> AppScreen.Settings
                 currentOpenId != null -> AppScreen.NoteDetail(currentOpenId)
                 else -> AppScreen.Main
@@ -585,6 +727,11 @@ class MainActivity : ComponentActivity() {
                             onBack = { showPhotoCapture = false },
                             onSaved = { showPhotoCapture = false },
                         )
+                        AppScreen.HandwritingCapture -> HandwritingCaptureScreen(
+                            model = model,
+                            onBack = { showHandwritingCapture = false },
+                            onSaved = { showHandwritingCapture = false },
+                        )
                         AppScreen.Trash -> TrashScreen(model = model, onBack = { showTrash = false })
                         AppScreen.Rules -> RulesScreen(model = model, onBack = { showRules = false })
                         AppScreen.Categories -> CategoriesScreen(model = model, onBack = { showCategories = false })
@@ -599,6 +746,9 @@ class MainActivity : ComponentActivity() {
                                 openNoteId = it
                             },
                         )
+                        AppScreen.AiProposals -> AiProposalsScreen(model = model, onBack = { showAiProposals = false })
+                        AppScreen.AiSetup -> AiSetupScreen(onBack = { showAiSetup = false })
+                        AppScreen.AiRunHistory -> AiRunHistoryScreen(model = model, onBack = { showAiRunHistory = false })
                         AppScreen.Settings -> SettingsScreen(
                             model = model,
                             onBack = { showSettings = false },
@@ -609,6 +759,8 @@ class MainActivity : ComponentActivity() {
                             onOpenPeople = { showPeople = true },
                             onOpenPlaces = { showPlaces = true },
                             onOpenReminders = { showReminders = true },
+                            onOpenAiSetup = { showAiSetup = true },
+                            onOpenAiRunHistory = { showAiRunHistory = true },
                         )
                         is AppScreen.NoteDetail -> NoteDetailScreen(
                             model = model,
@@ -616,7 +768,7 @@ class MainActivity : ComponentActivity() {
                             onBack = { openNoteId = null },
                             onOpenNote = { openNoteId = it },
                         )
-                        AppScreen.Main -> MainScreen(
+                        AppScreen.Main -> MainTabsScreen(
                             model = model,
                             themeMode = themeMode,
                             onThemeModeChange = { mode ->
@@ -627,6 +779,15 @@ class MainActivity : ComponentActivity() {
                             onOpenSettings = { showSettings = true },
                             onOpenVoiceCapture = { showVoiceCapture = true },
                             onOpenPhotoCapture = { showPhotoCapture = true },
+                            onOpenHandwritingCapture = { showHandwritingCapture = true },
+                            onOpenRules = { showRules = true },
+                            onOpenCategories = { showCategories = true },
+                            onOpenTopics = { showTopics = true },
+                            onOpenPeople = { showPeople = true },
+                            onOpenPlaces = { showPlaces = true },
+                            onOpenTrash = { showTrash = true },
+                            onOpenReminders = { showReminders = true },
+                            onOpenAiProposals = { showAiProposals = true },
                         )
                     }
                 }
@@ -642,14 +803,12 @@ class MainActivity : ComponentActivity() {
 }
 
 @Composable
-fun MainScreen(
+private fun TimelineTab(
     model: MainViewModel,
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
     onOpenNote: (String) -> Unit,
     onOpenSettings: () -> Unit,
-    onOpenVoiceCapture: () -> Unit,
-    onOpenPhotoCapture: () -> Unit,
 ) {
     val notes by model.notes.collectAsStateWithLifecycle()
     val results by model.results.collectAsStateWithLifecycle()
@@ -673,7 +832,6 @@ fun MainScreen(
         }
     }
 
-    val savedMsg = stringResource(R.string.saved_snackbar)
     val deletedMsg = stringResource(R.string.deleted_snackbar)
     val undoLabel = stringResource(R.string.undo)
     val movedMsgs = mapOf(
@@ -689,18 +847,6 @@ fun MainScreen(
             .imePadding(),
         containerColor = MaterialTheme.colorScheme.background,
         snackbarHost = { SnackbarHost(snackbarHost) },
-        bottomBar = {
-            Composer(
-                onSave = { title, body ->
-                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
-                    model.capture(title, body) { id ->
-                        showUndo(savedMsg, undoLabel) { model.delete(id) }
-                    }
-                },
-                onVoice = onOpenVoiceCapture,
-                onPhoto = onOpenPhotoCapture,
-            )
-        },
     ) { padding ->
         Column(
             modifier = Modifier
@@ -762,6 +908,475 @@ fun MainScreen(
                 }
             }
         }
+    }
+}
+
+/** The four persistent destinations; ordinal drives slide direction in [MainTabsScreen]. */
+private enum class MainTab { CAPTURE, TIMELINE, VAULT, PRIVACY }
+
+/**
+ * Bottom-tab shell replacing the old single Main screen (design pass matching the Stitch
+ * mockup). Capture/Timeline/Vault/Privacy are real tabs over the same [MainViewModel] — no new
+ * data layer, just a navigation shell around what was already there (Settings/Rules/Categories/
+ * Topics/People/Places/Trash/Reminders stay as pushed screens, reached from Vault/Privacy now
+ * instead of only from Settings).
+ */
+@Composable
+private fun MainTabsScreen(
+    model: MainViewModel,
+    themeMode: ThemeMode,
+    onThemeModeChange: (ThemeMode) -> Unit,
+    onOpenNote: (String) -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenVoiceCapture: () -> Unit,
+    onOpenPhotoCapture: () -> Unit,
+    onOpenHandwritingCapture: () -> Unit,
+    onOpenRules: () -> Unit,
+    onOpenCategories: () -> Unit,
+    onOpenTopics: () -> Unit,
+    onOpenPeople: () -> Unit,
+    onOpenPlaces: () -> Unit,
+    onOpenTrash: () -> Unit,
+    onOpenReminders: () -> Unit,
+    onOpenAiProposals: () -> Unit,
+) {
+    var tab by rememberSaveable { mutableStateOf(MainTab.CAPTURE) }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        bottomBar = {
+            NavigationBar {
+                NavigationBarItem(
+                    selected = tab == MainTab.CAPTURE,
+                    onClick = { tab = MainTab.CAPTURE },
+                    icon = { NoteTabIcon() },
+                    label = { Text(stringResource(R.string.tab_capture)) },
+                )
+                NavigationBarItem(
+                    selected = tab == MainTab.TIMELINE,
+                    onClick = { tab = MainTab.TIMELINE },
+                    icon = { ClockTabIcon() },
+                    label = { Text(stringResource(R.string.tab_timeline)) },
+                )
+                NavigationBarItem(
+                    selected = tab == MainTab.VAULT,
+                    onClick = { tab = MainTab.VAULT },
+                    icon = { VaultTabIcon() },
+                    label = { Text(stringResource(R.string.tab_vault)) },
+                )
+                NavigationBarItem(
+                    selected = tab == MainTab.PRIVACY,
+                    onClick = { tab = MainTab.PRIVACY },
+                    icon = { ShieldTabIcon() },
+                    label = { Text(stringResource(R.string.tab_privacy)) },
+                )
+            }
+        },
+    ) { padding ->
+        AnimatedContent(
+            targetState = tab,
+            modifier = Modifier.padding(padding),
+            transitionSpec = {
+                val forward = targetState.ordinal >= initialState.ordinal
+                val sign = if (forward) 1 else -1
+                (fadeIn(tween(200)) + slideInHorizontally(tween(200)) { it / 10 * sign })
+                    .togetherWith(fadeOut(tween(140)) + slideOutHorizontally(tween(140)) { -it / 10 * sign })
+            },
+            label = "tabNav",
+        ) { target ->
+            when (target) {
+                MainTab.CAPTURE -> CaptureTab(
+                    model = model,
+                    onVoice = onOpenVoiceCapture,
+                    onPhoto = onOpenPhotoCapture,
+                    onWrite = onOpenHandwritingCapture,
+                    onOpenNote = onOpenNote,
+                    onReviewInbox = {
+                        model.setStatusFilter(NoteStatus.INBOX)
+                        tab = MainTab.TIMELINE
+                    },
+                )
+                MainTab.TIMELINE -> TimelineTab(
+                    model = model,
+                    themeMode = themeMode,
+                    onThemeModeChange = onThemeModeChange,
+                    onOpenNote = onOpenNote,
+                    onOpenSettings = onOpenSettings,
+                )
+                MainTab.VAULT -> VaultTab(
+                    model = model,
+                    onOpenCategories = onOpenCategories,
+                    onOpenTopics = onOpenTopics,
+                    onOpenPeople = onOpenPeople,
+                    onOpenPlaces = onOpenPlaces,
+                )
+                MainTab.PRIVACY -> PrivacyRulesTab(
+                    model = model,
+                    onOpenRules = onOpenRules,
+                    onOpenTrash = onOpenTrash,
+                    onOpenReminders = onOpenReminders,
+                    onOpenSettings = onOpenSettings,
+                    onOpenAiProposals = onOpenAiProposals,
+                )
+            }
+        }
+    }
+}
+
+/** Scratchpad + multi-modal capture triggers (mockup: "Capture"). Reuses the existing
+ *  [Composer] and the real save-first [MainViewModel.capture] — nothing new is persisted here. */
+@Composable
+private fun CaptureTab(
+    model: MainViewModel,
+    onVoice: () -> Unit,
+    onPhoto: () -> Unit,
+    onWrite: () -> Unit,
+    onOpenNote: (String) -> Unit,
+    onReviewInbox: () -> Unit,
+) {
+    val context = LocalContext.current
+    val allNotes by model.allNotes.collectAsStateWithLifecycle()
+    val ruleEntities by model.rules.collectAsStateWithLifecycle()
+    val rules = remember(ruleEntities) { ruleEntities.mapNotNull { it.toRule() } }
+    val inboxNotes = remember(allNotes) {
+        allNotes.filter { it.status == NoteStatus.INBOX }.sortedByDescending { it.createdAt }
+    }
+    val previewInboxNotes = remember(inboxNotes) { inboxNotes.take(3) }
+    val snackbarHost = remember { SnackbarHostState() }
+    val scope = rememberCoroutineScope()
+    val haptics = LocalHapticFeedback.current
+    val savedMsg = stringResource(R.string.saved_snackbar)
+    val deletedMsg = stringResource(R.string.deleted_snackbar)
+    val undoLabel = stringResource(R.string.undo)
+    val movedMsgs = mapOf(
+        NoteStatus.INBOX to stringResource(R.string.moved_inbox),
+        NoteStatus.ACTIVE to stringResource(R.string.moved_active),
+        NoteStatus.DONE to stringResource(R.string.moved_done),
+        NoteStatus.ARCHIVED to stringResource(R.string.moved_archived),
+    )
+
+    fun showUndo(message: String, label: String, onUndo: () -> Unit) {
+        scope.launch {
+            snackbarHost.currentSnackbarData?.dismiss()
+            val result = snackbarHost.showSnackbar(message = message, actionLabel = label)
+            if (result == SnackbarResult.ActionPerformed) onUndo()
+        }
+    }
+
+    // D25: any file type, no preview — just copied into app-private storage and attached to a
+    // new note. Unlike Voice/Photo there's no transcript/OCR text to review before saving.
+    val pickAttachmentLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        scope.launch {
+            val fileName = withContext(Dispatchers.IO) {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    val nameIndex = cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    if (nameIndex >= 0 && cursor.moveToFirst()) cursor.getString(nameIndex) else null
+                }
+            } ?: uri.lastPathSegment ?: "attachment"
+            val dest = withContext(Dispatchers.IO) {
+                val file = File(model.attachmentsDir, "${UUID.randomUUID()}-$fileName")
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    file.outputStream().use { output -> input.copyTo(output) }
+                }
+                file
+            }
+            haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+            model.captureAttachment(dest.path, fileName) { id ->
+                showUndo(savedMsg, undoLabel) { model.delete(id) }
+            }
+        }
+    }
+
+    Scaffold(
+        modifier = Modifier
+            .fillMaxSize()
+            .imePadding(),
+        containerColor = androidx.compose.ui.graphics.Color.Transparent,
+        snackbarHost = { SnackbarHost(snackbarHost) },
+        bottomBar = {
+            Composer(
+                rules = rules,
+                onSave = { title, body ->
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    model.capture(title, body) { id ->
+                        showUndo(savedMsg, undoLabel) { model.delete(id) }
+                    }
+                },
+                onVoice = onVoice,
+                onPhoto = onPhoto,
+                onAttach = { pickAttachmentLauncher.launch(arrayOf("*/*")) },
+                onWrite = onWrite,
+            )
+        },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Spacer(Modifier.height(16.dp))
+            Text(stringResource(R.string.tab_capture), style = MaterialTheme.typography.headlineLarge)
+            Text(
+                stringResource(R.string.capture_tab_subtitle),
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            Surface(
+                onClick = onWrite,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                shadowElevation = 2.dp,
+            ) {
+                Row(
+                    modifier = Modifier.padding(16.dp).fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(14.dp),
+                ) {
+                    Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = RoundedCornerShape(14.dp)) {
+                        Box(modifier = Modifier.padding(10.dp)) {
+                            PenIcon(modifier = Modifier.size(24.dp), tint = MaterialTheme.colorScheme.onSecondaryContainer)
+                        }
+                    }
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                            Text(stringResource(R.string.handwriting_promo_title), style = MaterialTheme.typography.titleLarge)
+                            Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = CircleShape) {
+                                Text(
+                                    stringResource(R.string.handwriting_promo_badge),
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                                )
+                            }
+                        }
+                        Text(
+                            stringResource(R.string.handwriting_promo_subtitle),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                }
+            }
+            if (previewInboxNotes.isNotEmpty()) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Text(stringResource(R.string.awaiting_triage_title), style = MaterialTheme.typography.titleMedium)
+                    if (inboxNotes.size > previewInboxNotes.size) {
+                        TextButton(onClick = onReviewInbox) {
+                            Text(pluralStringResource(R.plurals.inbox_waiting, inboxNotes.size, inboxNotes.size))
+                        }
+                    }
+                }
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    previewInboxNotes.forEach { note ->
+                        SwipeableNote(
+                            note = note,
+                            modifier = Modifier.animateContentSize(),
+                            onDelete = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                model.delete(note.id)
+                                showUndo(deletedMsg, undoLabel) { model.restore(note.id) }
+                            },
+                            onAdvanceStatus = { from, to ->
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                model.setStatus(note.id, to)
+                                showUndo(movedMsgs.getValue(to), undoLabel) { model.setStatus(note.id, from) }
+                            },
+                            onOpen = { onOpenNote(note.id) },
+                        )
+                    }
+                }
+            }
+            Surface(
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(20.dp),
+                color = MaterialTheme.colorScheme.surfaceContainerHigh.copy(alpha = 0.5f),
+            ) {
+                Text(
+                    stringResource(R.string.capture_footer_quote),
+                    modifier = Modifier.padding(16.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Spacer(Modifier.height(80.dp))
+        }
+    }
+}
+
+/** Notebooks & entities (mockup: "Vault") — summary tiles over the real Categories/Topics/
+ *  People/Places vocabularies, each opening its existing CRUD screen. */
+@Composable
+private fun VaultTab(
+    model: MainViewModel,
+    onOpenCategories: () -> Unit,
+    onOpenTopics: () -> Unit,
+    onOpenPeople: () -> Unit,
+    onOpenPlaces: () -> Unit,
+) {
+    val categories by model.categories.collectAsStateWithLifecycle()
+    val topics by model.topics.collectAsStateWithLifecycle()
+    val people by model.people.collectAsStateWithLifecycle()
+    val places by model.places.collectAsStateWithLifecycle()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+    ) {
+        Spacer(Modifier.height(16.dp))
+        Text(stringResource(R.string.tab_vault), style = MaterialTheme.typography.headlineLarge)
+        Text(
+            stringResource(R.string.vault_subtitle),
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+        VaultTile(stringResource(R.string.categories_title), categories.size, onOpenCategories)
+        VaultTile(stringResource(R.string.topics_title), topics.size, onOpenTopics)
+        VaultTile(stringResource(R.string.people_title), people.size, onOpenPeople)
+        VaultTile(stringResource(R.string.places_title), places.size, onOpenPlaces)
+        Spacer(Modifier.height(24.dp))
+    }
+}
+
+@Composable
+private fun VaultTile(title: String, count: Int, onClick: () -> Unit) {
+    val shape = RoundedCornerShape(20.dp)
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.fillMaxWidth(),
+        shape = shape,
+        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+        shadowElevation = 2.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(16.dp).fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(title, style = MaterialTheme.typography.titleMedium)
+            Text("$count", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
+    }
+}
+
+/** Privacy assurance + the real deterministic rules engine (mockup: "Privacy & Rules"). Rule
+ *  toggles write through [MainViewModel.setRuleEnabled] immediately; add/edit/delete stays on
+ *  the existing [RulesScreen] rather than duplicating that editor here. */
+@Composable
+private fun PrivacyRulesTab(
+    model: MainViewModel,
+    onOpenRules: () -> Unit,
+    onOpenTrash: () -> Unit,
+    onOpenReminders: () -> Unit,
+    onOpenSettings: () -> Unit,
+    onOpenAiProposals: () -> Unit,
+) {
+    val rules by model.rules.collectAsStateWithLifecycle()
+    val pendingProposals by model.pendingProposals.collectAsStateWithLifecycle()
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .padding(horizontal = 20.dp)
+            .verticalScroll(rememberScrollState()),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+    ) {
+        Spacer(Modifier.height(16.dp))
+        Text(stringResource(R.string.tab_privacy), style = MaterialTheme.typography.headlineLarge)
+
+        Surface(
+            modifier = Modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(20.dp),
+            color = MaterialTheme.colorScheme.secondaryContainer,
+        ) {
+            Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(
+                    stringResource(R.string.privacy_assurance_title),
+                    style = MaterialTheme.typography.titleMedium,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+                Text(
+                    stringResource(R.string.privacy_assurance_body),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(stringResource(R.string.rules_section_title), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenRules) { Text(stringResource(R.string.open_rules)) }
+            }
+            if (rules.isEmpty()) {
+                Text(
+                    stringResource(R.string.rules_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                rules.forEach { entity ->
+                    val rule = remember(entity) { entity.toRule() }
+                    if (rule != null) {
+                        RuleRow(
+                            rule = rule,
+                            onToggle = { model.setRuleEnabled(entity.id, it) },
+                            onDelete = { model.deleteRule(entity.id) },
+                        )
+                    }
+                }
+            }
+        }
+
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(stringResource(R.string.ai_proposals_section_title), style = MaterialTheme.typography.titleMedium)
+                if (pendingProposals.isNotEmpty()) {
+                    Surface(color = MaterialTheme.colorScheme.tertiaryContainer, shape = CircleShape) {
+                        Text(
+                            "${pendingProposals.size}",
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onTertiaryContainer,
+                        )
+                    }
+                }
+            }
+            TextButton(onClick = onOpenAiProposals) { Text(stringResource(R.string.open_ai_proposals)) }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.trash_section_title), style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = onOpenTrash) { Text(stringResource(R.string.open_trash)) }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.reminders_section_title), style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = onOpenReminders) { Text(stringResource(R.string.open_reminders)) }
+        }
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Text(stringResource(R.string.settings), style = MaterialTheme.typography.titleMedium)
+            TextButton(onClick = onOpenSettings) { Text(stringResource(R.string.settings)) }
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -1109,7 +1724,9 @@ private fun NoteCard(
     justSaved: Boolean = false,
     highlightQuery: String = "",
 ) {
+    val attachmentFileName = note.attachmentFileName
     val body = note.rawText ?: note.transcript ?: note.ocrText
+        ?: attachmentFileName?.let { stringResource(R.string.attachment_body_label, it) }
     val title = note.title
 
     // Captured once at first composition: if `justSaved` flips to false mid-animation (the
@@ -1219,6 +1836,8 @@ private fun sourceLabel(source: NoteSource): String = stringResource(
         NoteSource.VOICE -> R.string.source_voice
         NoteSource.PHOTO -> R.string.source_photo
         NoteSource.SHARE -> R.string.source_share
+        NoteSource.ATTACHMENT -> R.string.source_attachment
+        NoteSource.INK -> R.string.source_ink
     },
 )
 
@@ -1237,7 +1856,14 @@ private fun statusLabel(status: NoteStatus): String = stringResource(
  * field and reveals Save. Fields clear only after onSave is called (the ViewModel saves first).
  */
 @Composable
-private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () -> Unit, onPhoto: () -> Unit) {
+private fun Composer(
+    rules: List<Rule>,
+    onSave: (title: String, body: String) -> Unit,
+    onVoice: () -> Unit,
+    onPhoto: () -> Unit,
+    onAttach: () -> Unit,
+    onWrite: () -> Unit,
+) {
     var title by rememberSaveable { mutableStateOf("") }
     var body by rememberSaveable { mutableStateOf("") }
     var titleFocused by remember { mutableStateOf(false) }
@@ -1245,6 +1871,13 @@ private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () 
 
     val canSave = title.isNotBlank() || body.isNotBlank()
     val expanded = titleFocused || bodyFocused || canSave
+
+    // Mirrors NoteCommandHandler.applyRules exactly (D16) — a live preview of the same
+    // first-match rule the backend will actually run right after save, not a guess.
+    val previewMatch = remember(rules, title, body) {
+        val text = "$title $body".trim()
+        if (text.isBlank()) null else RuleEngine.firstMatch(rules, text)
+    }
 
     val fieldColors = OutlinedTextFieldDefaults.colors(
         focusedContainerColor = MaterialTheme.colorScheme.surfaceContainerHigh,
@@ -1273,6 +1906,28 @@ private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () 
                 .animateContentSize(),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 6.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    PulsingDraftDot()
+                    Text(
+                        stringResource(R.string.draft_active_label),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+                val words = body.trim().let { if (it.isEmpty()) 0 else it.split("\\s+".toRegex()).size }
+                Text(
+                    stringResource(R.string.draft_word_count, words, body.length),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
             AnimatedVisibility(
                 visible = expanded,
                 enter = fadeIn() + expandVertically(),
@@ -1290,63 +1945,102 @@ private fun Composer(onSave: (title: String, body: String) -> Unit, onVoice: () 
                     colors = fieldColors,
                 )
             }
-            Row(verticalAlignment = Alignment.Bottom, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                OutlinedTextField(
-                    value = body,
-                    onValueChange = { body = it },
-                    modifier = Modifier
-                        .weight(1f)
-                        .onFocusChanged { bodyFocused = it.isFocused },
-                    placeholder = { Text(stringResource(R.string.capture_hint_text)) },
-                    minLines = 1,
-                    maxLines = 5,
-                    shape = RoundedCornerShape(24.dp),
-                    colors = fieldColors,
-                )
-                AnimatedVisibility(
-                    visible = !expanded,
-                    enter = fadeIn() + scaleIn(),
-                    exit = fadeOut() + scaleOut(),
-                ) {
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        CircleIconButton(
-                            onClick = onVoice,
-                            contentDescription = stringResource(R.string.voice_mic_button),
-                            containerColor = MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
-                        ) {
-                            MicIcon()
-                        }
-                        CircleIconButton(
-                            onClick = onPhoto,
-                            contentDescription = stringResource(R.string.photo_camera_button),
-                            containerColor = MaterialTheme.colorScheme.secondaryContainer,
-                            contentColor = MaterialTheme.colorScheme.onSecondaryContainer,
-                        ) {
-                            CameraIcon()
-                        }
+            OutlinedTextField(
+                value = body,
+                onValueChange = { body = it },
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .onFocusChanged { bodyFocused = it.isFocused },
+                placeholder = { Text(stringResource(R.string.capture_hint_text)) },
+                minLines = 3,
+                maxLines = 8,
+                shape = RoundedCornerShape(20.dp),
+                colors = fieldColors,
+            )
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(top = 2.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+                    ToolbarIconButton(onClick = onVoice, contentDescription = stringResource(R.string.voice_mic_button)) {
+                        MicIcon(modifier = Modifier.size(20.dp))
+                    }
+                    ToolbarIconButton(onClick = onPhoto, contentDescription = stringResource(R.string.photo_camera_button)) {
+                        CameraIcon(modifier = Modifier.size(20.dp))
+                    }
+                    ToolbarIconButton(onClick = onAttach, contentDescription = stringResource(R.string.mode_attach)) {
+                        AttachFileIcon(modifier = Modifier.size(20.dp))
+                    }
+                    ToolbarIconButton(onClick = onWrite, contentDescription = stringResource(R.string.mode_write)) {
+                        PenIcon(modifier = Modifier.size(20.dp))
                     }
                 }
-                AnimatedVisibility(
-                    visible = canSave,
-                    enter = fadeIn() + scaleIn(),
-                    exit = fadeOut() + scaleOut(),
-                ) {
-                    Button(
-                        onClick = {
-                            onSave(title, body)
-                            title = ""
-                            body = ""
-                        },
-                        modifier = Modifier.height(56.dp),
-                        shape = RoundedCornerShape(24.dp),
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    AnimatedVisibility(visible = title.isNotBlank() || body.isNotBlank()) {
+                        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = CircleShape) {
+                            Text(
+                                previewMatch?.action?.category ?: stringResource(R.string.status_inbox),
+                                modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                    AnimatedVisibility(
+                        visible = canSave,
+                        enter = fadeIn() + scaleIn(),
+                        exit = fadeOut() + scaleOut(),
                     ) {
-                        Text(stringResource(R.string.capture_save), fontWeight = FontWeight.SemiBold)
+                        Button(
+                            onClick = {
+                                onSave(title, body)
+                                title = ""
+                                body = ""
+                            },
+                            shape = RoundedCornerShape(16.dp),
+                            contentPadding = PaddingValues(horizontal = 16.dp, vertical = 10.dp),
+                        ) {
+                            Text(stringResource(R.string.capture_save), fontWeight = FontWeight.SemiBold)
+                        }
                     }
                 }
             }
         }
     }
+}
+
+@Composable
+private fun ToolbarIconButton(onClick: () -> Unit, contentDescription: String, content: @Composable () -> Unit) {
+    Surface(
+        onClick = onClick,
+        modifier = Modifier.size(36.dp),
+        shape = RoundedCornerShape(10.dp),
+        color = androidx.compose.ui.graphics.Color.Transparent,
+        contentColor = MaterialTheme.colorScheme.onSurfaceVariant,
+    ) {
+        Box(contentAlignment = Alignment.Center, modifier = Modifier.semantics { this.contentDescription = contentDescription }) {
+            content()
+        }
+    }
+}
+
+@Composable
+private fun PulsingDraftDot() {
+    val infinite = rememberInfiniteTransition(label = "draftPulse")
+    val alpha by infinite.animateFloat(
+        initialValue = 1f,
+        targetValue = 0.35f,
+        animationSpec = infiniteRepeatable(animation = tween(700), repeatMode = RepeatMode.Reverse),
+        label = "draftPulseAlpha",
+    )
+    Box(
+        Modifier
+            .size(7.dp)
+            .background(MaterialTheme.colorScheme.secondary.copy(alpha = alpha), CircleShape),
+    )
 }
 
 /**
@@ -1444,17 +2138,29 @@ fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit, o
                 ),
             )
 
-            AnimatedVisibility(visible = dirty, enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut()) {
-                Button(
-                    onClick = {
-                        model.updateText(note.id, body)
-                        scope.launch { snackbarHost.showSnackbar(savedMsg) }
-                    },
-                    shape = RoundedCornerShape(24.dp),
-                ) {
-                    Text(stringResource(R.string.save), fontWeight = FontWeight.SemiBold)
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
+                AnimatedVisibility(visible = dirty, enter = fadeIn() + scaleIn(), exit = fadeOut() + scaleOut()) {
+                    Button(
+                        onClick = {
+                            model.updateText(note.id, body)
+                            scope.launch { snackbarHost.showSnackbar(savedMsg) }
+                        },
+                        shape = RoundedCornerShape(24.dp),
+                    ) {
+                        Text(stringResource(R.string.save), fontWeight = FontWeight.SemiBold)
+                    }
+                }
+                val clipboard = LocalClipboardManager.current
+                TextButton(onClick = { clipboard.setText(AnnotatedString(body)) }) {
+                    Text(stringResource(R.string.copy_note_text))
                 }
             }
+
+            PendingAiSuggestionsSection(model = model, noteId = note.id)
+
+            DerivedFactsSection(model = model, noteId = note.id)
+
+            RevisionHistorySection(model = model, noteId = note.id, onRevertedText = { body = it })
 
             NoteLinksSection(model = model, note = note, allNotes = allNotes, onOpenNote = onOpenNote)
 
@@ -1464,6 +2170,191 @@ fun NoteDetailScreen(model: MainViewModel, noteId: String, onBack: () -> Unit, o
         }
     }
 }
+
+/** Any AI proposals still PENDING for this specific note, same approve/reject commands the
+ *  dedicated AI Proposals screen uses, surfaced in context instead of only in that separate list. */
+@Composable
+private fun PendingAiSuggestionsSection(model: MainViewModel, noteId: String) {
+    val pending by model.pendingProposals.collectAsStateWithLifecycle()
+    val forNote = remember(pending, noteId) { pending.filter { it.noteId == noteId } }
+    if (forNote.isEmpty()) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.pending_ai_suggestions_title), style = MaterialTheme.typography.titleMedium)
+        forNote.forEach { proposal ->
+            ProposalRow(
+                proposal = proposal,
+                noteSnippet = null,
+                onApprove = { model.approveProposal(proposal.id) },
+                onReject = { model.rejectProposal(proposal.id) },
+            )
+        }
+    }
+}
+
+/** Current derived facts (category/tag/person/place/topic) for this note — the "why was this
+ *  filed here" explanation, decoding each fact's [Origin] into a human-readable source. */
+@Composable
+private fun DerivedFactsSection(model: MainViewModel, noteId: String) {
+    val facts by remember(noteId) { model.derivedForNote(noteId) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    if (facts.isEmpty()) return
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.derived_facts_title), style = MaterialTheme.typography.titleMedium)
+        facts.forEach { fact ->
+            Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Text(derivedFieldLabel(fact.field), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.outline)
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = CircleShape) {
+                    Text(
+                        fact.value,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 4.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                Text(originLabel(fact.origin), style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
+        }
+    }
+}
+
+@Composable
+private fun derivedFieldLabel(field: DerivedField): String = stringResource(
+    when (field) {
+        DerivedField.CATEGORY -> R.string.derived_field_category
+        DerivedField.TAG -> R.string.derived_field_tag
+        DerivedField.DUE_AT -> R.string.derived_field_due_at
+        DerivedField.PERSON -> R.string.derived_field_person
+        DerivedField.PLACE -> R.string.derived_field_place
+        DerivedField.TOPIC -> R.string.derived_field_topic
+    },
+)
+
+@Composable
+private fun originLabel(raw: String): String = when (val origin = Origin.parse(raw)) {
+    Origin.SystemOrigin -> stringResource(R.string.origin_system)
+    Origin.UserOrigin -> stringResource(R.string.origin_user)
+    is Origin.RuleOrigin -> stringResource(R.string.origin_rule, origin.ruleId)
+    is Origin.AiOrigin -> stringResource(R.string.origin_ai, origin.runId.take(8))
+    null -> stringResource(R.string.origin_unknown)
+}
+
+/** Full audit trail for this note, newest first (already the DAO's order) — actor, action, a
+ *  word-count delta instead of a full word-level diff (ponytail: real LCS diffing is a bigger
+ *  lift than the value justifies for v1), and Revert on any past text revision. Revert goes
+ *  through the normal [MainViewModel.updateText] command, so it's itself a new audited
+ *  revision — append-only stays true automatically, no new command needed. */
+@Composable
+private fun RevisionHistorySection(model: MainViewModel, noteId: String, onRevertedText: (String) -> Unit) {
+    val entries by remember(noteId) { model.auditForNote(noteId) }.collectAsStateWithLifecycle(initialValue = emptyList())
+    if (entries.isEmpty()) return
+    val json = remember { Json { ignoreUnknownKeys = true } }
+    fun decode(raw: String?): NoteSnapshot? = raw?.let { runCatching { json.decodeFromString(NoteSnapshot.serializer(), it) }.getOrNull() }
+
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Text(stringResource(R.string.revision_history_title), style = MaterialTheme.typography.titleMedium)
+        entries.forEachIndexed { index, entry ->
+            val before = decode(entry.before)
+            val after = decode(entry.after)
+            RevisionRow(
+                entry = entry,
+                before = before,
+                after = after,
+                isCurrent = index == 0,
+                onRevert = {
+                    val text = before?.rawText ?: before?.transcript ?: before?.ocrText ?: ""
+                    model.updateText(noteId, text)
+                    onRevertedText(text)
+                },
+            )
+        }
+    }
+}
+
+@Composable
+private fun RevisionRow(entry: AuditEntity, before: NoteSnapshot?, after: NoteSnapshot?, isCurrent: Boolean, onRevert: () -> Unit) {
+    val rowShape = RoundedCornerShape(16.dp)
+    Card(
+        shape = rowShape,
+        colors = CardDefaults.cardColors(
+            containerColor = if (isCurrent) {
+                MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.25f)
+            } else {
+                MaterialTheme.colorScheme.surfaceContainerLow
+            },
+        ),
+    ) {
+        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(auditActionLabel(entry.action), style = MaterialTheme.typography.labelLarge, fontWeight = FontWeight.SemiBold)
+                    if (isCurrent) {
+                        Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = CircleShape) {
+                            Text(
+                                stringResource(R.string.revision_current),
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSecondaryContainer,
+                            )
+                        }
+                    }
+                }
+                Text(
+                    DateUtils.getRelativeTimeSpanString(entry.at, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString(),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.outline,
+                )
+            }
+            Text(auditActorLabel(entry.actor), style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (entry.action == AuditAction.UPDATE_RAW_TEXT || entry.action == AuditAction.CREATE) {
+                val beforeWords = wordCount(before?.rawText ?: before?.transcript ?: before?.ocrText)
+                val afterWords = wordCount(after?.rawText ?: after?.transcript ?: after?.ocrText)
+                val delta = afterWords - beforeWords
+                if (delta != 0) {
+                    Text(
+                        if (delta > 0) stringResource(R.string.revision_words_added, delta) else stringResource(R.string.revision_words_removed, -delta),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            }
+            if (!isCurrent && entry.action == AuditAction.UPDATE_RAW_TEXT) {
+                TextButton(onClick = onRevert, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.revision_revert))
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun auditActionLabel(action: AuditAction): String = stringResource(
+    when (action) {
+        AuditAction.CREATE -> R.string.revision_action_create
+        AuditAction.UPDATE_RAW_TEXT -> R.string.revision_action_update
+        AuditAction.SET_STATUS -> R.string.revision_action_status
+        AuditAction.SOFT_DELETE -> R.string.revision_action_delete
+        AuditAction.RESTORE -> R.string.revision_action_restore
+        AuditAction.UNDO -> R.string.revision_action_undo
+    },
+)
+
+@Composable
+private fun auditActorLabel(actor: AuditActor): String = stringResource(
+    when (actor) {
+        AuditActor.USER -> R.string.revision_actor_user
+        AuditActor.RULE -> R.string.revision_actor_rule
+        AuditActor.AI -> R.string.revision_actor_ai
+        AuditActor.SYSTEM -> R.string.revision_actor_system
+    },
+)
+
+private fun wordCount(text: String?): Int =
+    text?.trim()?.let { if (it.isEmpty()) 0 else it.split("\\s+".toRegex()).size } ?: 0
 
 /** Existing links (tap to open the other note) + an inline filtered picker to add one (D18). */
 @Composable
@@ -1802,6 +2693,8 @@ fun SettingsScreen(
     onOpenPeople: () -> Unit,
     onOpenPlaces: () -> Unit,
     onOpenReminders: () -> Unit,
+    onOpenAiSetup: () -> Unit,
+    onOpenAiRunHistory: () -> Unit,
 ) {
     BackHandler(onBack = onBack)
 
@@ -1926,6 +2819,16 @@ fun SettingsScreen(
                 }
             }
 
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.ai_setup_section_title), style = MaterialTheme.typography.titleMedium)
+                TextButton(onClick = onOpenAiSetup, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_ai_setup))
+                }
+                TextButton(onClick = onOpenAiRunHistory, modifier = Modifier.padding(start = 0.dp)) {
+                    Text(stringResource(R.string.open_ai_run_history))
+                }
+            }
+
             Spacer(Modifier.height(8.dp))
             Text(
                 stringResource(R.string.settings_version, versionName),
@@ -1936,6 +2839,329 @@ fun SettingsScreen(
         }
     }
 }
+
+private fun modelFileStatus(context: Context): Pair<Boolean, Long> {
+    val file = File(com.mindpalace.app.ai.AiModelConfig.modelPath(context))
+    return file.exists() to file.length()
+}
+
+/**
+ * AI setup (CLAUDE.md backlog): pick the GGUF model file instead of requiring `adb push` to the
+ * hardcoded path, see whether one's installed, and trigger an immediate run. Scheduling itself
+ * (daily, charging + idle + battery not low) isn't user-configurable yet — [AiNightWorker] has
+ * the only copy of those constraints; this screen just reports them.
+ */
+@Composable
+fun AiSetupScreen(onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val context = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var modelStatus by remember { mutableStateOf(modelFileStatus(context)) }
+    val (modelExists, modelBytes) = modelStatus
+    var copying by remember { mutableStateOf(false) }
+    var runStarted by remember { mutableStateOf(false) }
+
+    val pickModelLauncher = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        copying = true
+        scope.launch {
+            withContext(Dispatchers.IO) {
+                val dest = File(com.mindpalace.app.ai.AiModelConfig.modelPath(context))
+                context.contentResolver.openInputStream(uri)?.use { input ->
+                    dest.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            modelStatus = modelFileStatus(context)
+            copying = false
+        }
+    }
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.ai_setup_title), style = MaterialTheme.typography.headlineLarge)
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.ai_setup_model_section), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (copying) {
+                        stringResource(R.string.ai_setup_copying)
+                    } else if (modelExists) {
+                        stringResource(R.string.ai_setup_model_installed, modelBytes / (1024 * 1024))
+                    } else {
+                        stringResource(R.string.ai_setup_no_model)
+                    },
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                Button(
+                    onClick = { pickModelLauncher.launch(arrayOf("*/*")) },
+                    enabled = !copying,
+                    shape = RoundedCornerShape(20.dp),
+                ) {
+                    Text(stringResource(R.string.ai_setup_choose_model))
+                }
+            }
+
+            Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text(stringResource(R.string.ai_setup_schedule_section), style = MaterialTheme.typography.titleMedium)
+                Text(
+                    stringResource(R.string.ai_setup_schedule_body),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+                TextButton(
+                    onClick = {
+                        com.mindpalace.app.ai.AiNightWorker.runOnce(context)
+                        runStarted = true
+                    },
+                    enabled = modelExists,
+                    modifier = Modifier.padding(start = 0.dp),
+                ) {
+                    Text(stringResource(R.string.ai_setup_run_now))
+                }
+                AnimatedVisibility(visible = runStarted) {
+                    Text(
+                        stringResource(R.string.ai_setup_run_started),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.secondary,
+                    )
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+/**
+ * AI run history (CLAUDE.md backlog): every night-loop run so far, newest first. The data was
+ * already recorded by [com.mindpalace.app.ai.AiNightRunner] into `ai_runs` — this just surfaces it.
+ */
+@Composable
+fun AiRunHistoryScreen(model: MainViewModel, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+    val runs by model.aiRuns.collectAsStateWithLifecycle()
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.ai_run_history_title), style = MaterialTheme.typography.headlineLarge)
+
+            if (runs.isEmpty()) {
+                Text(
+                    stringResource(R.string.ai_run_history_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    runs.forEach { run -> AiRunRow(run) }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun AiRunRow(run: AiRunEntity) {
+    val rowShape = RoundedCornerShape(20.dp)
+    Card(
+        modifier = Modifier.fillMaxWidth(),
+        shape = rowShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(run.model, style = MaterialTheme.typography.titleMedium)
+                val outcomeColor = if (run.outcome == "SUCCEEDED") {
+                    MaterialTheme.colorScheme.secondary
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+                Surface(color = outcomeColor.copy(alpha = 0.15f), shape = CircleShape) {
+                    Text(
+                        run.outcome,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = outcomeColor,
+                    )
+                }
+            }
+            Text(
+                DateUtils.getRelativeTimeSpanString(run.started, System.currentTimeMillis(), DateUtils.MINUTE_IN_MILLIS).toString(),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            val finished = run.finished
+            if (finished != null) {
+                Text(
+                    stringResource(R.string.ai_run_duration, (finished - run.started) / 1000),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(
+                stringResource(R.string.ai_run_notes_processed, run.notesProcessed),
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+/**
+ * AI proposals review (CLAUDE.md backlog, "AI: Proposals review"): the only place a night-loop
+ * suggestion can ever reach a note — approve applies it through [MainViewModel.approveProposal]
+ * (which goes through [com.mindpalace.app.core.commands.NoteCommandHandler], never the DAOs
+ * directly); reject just retires it. The model never gets a second vote.
+ */
+@Composable
+fun AiProposalsScreen(model: MainViewModel, onBack: () -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val proposals by model.pendingProposals.collectAsStateWithLifecycle()
+    val allNotes by model.allNotes.collectAsStateWithLifecycle()
+    val haptics = LocalHapticFeedback.current
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.ai_proposals_title), style = MaterialTheme.typography.headlineLarge)
+
+            if (proposals.isEmpty()) {
+                Text(
+                    stringResource(R.string.ai_proposals_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            } else {
+                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                    proposals.forEach { proposal ->
+                        val note = allNotes.find { it.id == proposal.noteId }
+                        val snippet = note?.let { it.title ?: it.rawText ?: it.transcript ?: it.ocrText }
+                        ProposalRow(
+                            proposal = proposal,
+                            noteSnippet = snippet,
+                            onApprove = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                model.approveProposal(proposal.id)
+                            },
+                            onReject = {
+                                haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                                model.rejectProposal(proposal.id)
+                            },
+                        )
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+@Composable
+private fun ProposalRow(proposal: ProposalEntity, noteSnippet: String?, onApprove: () -> Unit, onReject: () -> Unit) {
+    val rowShape = RoundedCornerShape(20.dp)
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .shadow(elevation = 2.dp, shape = rowShape, ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
+        shape = rowShape,
+        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceContainerLowest),
+    ) {
+        Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Surface(color = MaterialTheme.colorScheme.secondaryContainer, shape = CircleShape) {
+                    Text(
+                        proposal.kind.name.lowercase().replaceFirstChar { it.uppercase() },
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp),
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSecondaryContainer,
+                    )
+                }
+                Text(
+                    stringResource(R.string.ai_proposal_confidence, (proposal.confidence * 100).toInt()),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Text(proposal.newValue, style = MaterialTheme.typography.titleMedium)
+            if (snippetIsUsable(noteSnippet)) {
+                Text(
+                    noteSnippet!!,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+            Text(
+                "“${proposal.evidenceQuote}”",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.outline,
+                maxLines = 2,
+            )
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Button(onClick = onApprove, shape = RoundedCornerShape(16.dp)) {
+                    Text(stringResource(R.string.ai_proposal_approve))
+                }
+                TextButton(onClick = onReject) {
+                    Text(stringResource(R.string.ai_proposal_reject))
+                }
+            }
+        }
+    }
+}
+
+private fun snippetIsUsable(snippet: String?): Boolean = !snippet.isNullOrBlank()
 
 /**
  * Trash: recently soft-deleted notes with restore (D-plan screen 2). No permanent/hard delete in
@@ -2190,12 +3416,22 @@ private fun RuleRow(rule: Rule, onToggle: (Boolean) -> Unit, onDelete: () -> Uni
     }
 }
 
+/** One row in a [VocabScreen] list — note count is 0 until a rule (categories) or an approved
+ *  AI proposal (topics/people/places) has actually filed a note under this value. */
+private data class VocabItem(val name: String, val createdAt: Long, val noteCount: Int)
+
+private enum class VocabSort { RECENT, ALPHABETICAL, MOST_NOTES }
+
 @Composable
 fun CategoriesScreen(model: MainViewModel, onBack: () -> Unit) {
     val categories by model.categories.collectAsStateWithLifecycle()
+    val counts by model.categoryNoteCounts.collectAsStateWithLifecycle()
+    val items = remember(categories, counts) {
+        categories.map { VocabItem(it.name, it.createdAt, counts[it.name] ?: 0) }
+    }
     VocabScreen(
         title = stringResource(R.string.categories_title),
-        names = categories.map { it.name },
+        items = items,
         addHint = stringResource(R.string.add_category_hint),
         emptyText = stringResource(R.string.categories_empty),
         onAdd = model::addCategory,
@@ -2206,9 +3442,13 @@ fun CategoriesScreen(model: MainViewModel, onBack: () -> Unit) {
 @Composable
 fun TopicsScreen(model: MainViewModel, onBack: () -> Unit) {
     val topics by model.topics.collectAsStateWithLifecycle()
+    val counts by model.topicNoteCounts.collectAsStateWithLifecycle()
+    val items = remember(topics, counts) {
+        topics.map { VocabItem(it.name, it.createdAt, counts[it.name] ?: 0) }
+    }
     VocabScreen(
         title = stringResource(R.string.topics_title),
-        names = topics.map { it.name },
+        items = items,
         addHint = stringResource(R.string.add_topic_hint),
         emptyText = stringResource(R.string.topics_empty),
         onAdd = model::addTopic,
@@ -2219,9 +3459,13 @@ fun TopicsScreen(model: MainViewModel, onBack: () -> Unit) {
 @Composable
 fun PeopleScreen(model: MainViewModel, onBack: () -> Unit) {
     val people by model.people.collectAsStateWithLifecycle()
+    val counts by model.personNoteCounts.collectAsStateWithLifecycle()
+    val items = remember(people, counts) {
+        people.map { VocabItem(it.name, it.createdAt, counts[it.name] ?: 0) }
+    }
     VocabScreen(
         title = stringResource(R.string.people_title),
-        names = people.map { it.name },
+        items = items,
         addHint = stringResource(R.string.add_person_hint),
         emptyText = stringResource(R.string.people_empty),
         onAdd = model::addPerson,
@@ -2232,9 +3476,13 @@ fun PeopleScreen(model: MainViewModel, onBack: () -> Unit) {
 @Composable
 fun PlacesScreen(model: MainViewModel, onBack: () -> Unit) {
     val places by model.places.collectAsStateWithLifecycle()
+    val counts by model.placeNoteCounts.collectAsStateWithLifecycle()
+    val items = remember(places, counts) {
+        places.map { VocabItem(it.name, it.createdAt, counts[it.name] ?: 0) }
+    }
     VocabScreen(
         title = stringResource(R.string.places_title),
-        names = places.map { it.name },
+        items = items,
         addHint = stringResource(R.string.add_place_hint),
         emptyText = stringResource(R.string.places_empty),
         onAdd = model::addPlace,
@@ -2243,15 +3491,15 @@ fun PlacesScreen(model: MainViewModel, onBack: () -> Unit) {
 }
 
 /**
- * Shared shell for the three append-only vocabularies (Topics, People, Places — D18). Each is
- * just a named list today; there's no delete because nothing yet references these by id in a way
- * that needs cleanup, and no merge/edit because §7 says two plausible matches must ask, not guess
- * — safer to leave that for when AI-assisted matching actually exists.
+ * Shared shell for the three append-only vocabularies (Topics, People, Places — D18), plus
+ * Categories. There's no delete because nothing yet references these by id in a way that needs
+ * cleanup, and no merge/edit because §7 says two plausible matches must ask, not guess — safer
+ * to leave that for when AI-assisted matching actually exists.
  */
 @Composable
 private fun VocabScreen(
     title: String,
-    names: List<String>,
+    items: List<VocabItem>,
     addHint: String,
     emptyText: String,
     onAdd: (String) -> Unit,
@@ -2259,7 +3507,21 @@ private fun VocabScreen(
 ) {
     BackHandler(onBack = onBack)
     var newName by rememberSaveable { mutableStateOf("") }
+    var query by rememberSaveable { mutableStateOf("") }
+    var sort by rememberSaveable { mutableStateOf(VocabSort.RECENT) }
     val haptics = LocalHapticFeedback.current
+
+    val visible = remember(items, query, sort) {
+        items
+            .filter { query.isBlank() || it.name.contains(query, ignoreCase = true) }
+            .let { list ->
+                when (sort) {
+                    VocabSort.RECENT -> list.sortedByDescending { it.createdAt }
+                    VocabSort.ALPHABETICAL -> list.sortedBy { it.name.lowercase() }
+                    VocabSort.MOST_NOTES -> list.sortedByDescending { it.noteCount }
+                }
+            }
+    }
 
     Scaffold(
         modifier = Modifier.fillMaxSize(),
@@ -2307,15 +3569,40 @@ private fun VocabScreen(
                 }
             }
 
-            if (names.isEmpty()) {
+            if (items.isNotEmpty()) {
+                OutlinedTextField(
+                    value = query,
+                    onValueChange = { query = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    placeholder = { Text(stringResource(R.string.vocab_search_hint)) },
+                    singleLine = true,
+                    shape = RoundedCornerShape(20.dp),
+                )
+                Row(
+                    modifier = Modifier.horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    FilterChip(selected = sort == VocabSort.RECENT, onClick = { sort = VocabSort.RECENT }, label = { Text(stringResource(R.string.vocab_sort_recent)) })
+                    FilterChip(selected = sort == VocabSort.ALPHABETICAL, onClick = { sort = VocabSort.ALPHABETICAL }, label = { Text(stringResource(R.string.vocab_sort_alphabetical)) })
+                    FilterChip(selected = sort == VocabSort.MOST_NOTES, onClick = { sort = VocabSort.MOST_NOTES }, label = { Text(stringResource(R.string.vocab_sort_most_notes)) })
+                }
+            }
+
+            if (items.isEmpty()) {
                 Text(
                     emptyText,
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+            } else if (visible.isEmpty()) {
+                Text(
+                    stringResource(R.string.vocab_search_empty),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
             } else {
                 Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                    names.forEach { name ->
+                    visible.forEach { item ->
                         val rowShape = RoundedCornerShape(16.dp)
                         Surface(
                             modifier = Modifier
@@ -2329,11 +3616,22 @@ private fun VocabScreen(
                             shape = rowShape,
                             color = MaterialTheme.colorScheme.surfaceContainerLowest,
                         ) {
-                            Text(
-                                name,
-                                modifier = Modifier.padding(horizontal = 16.dp, vertical = 14.dp),
-                                style = MaterialTheme.typography.bodyLarge,
-                            )
+                            Row(
+                                modifier = Modifier
+                                    .padding(horizontal = 16.dp, vertical = 14.dp)
+                                    .fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween,
+                                verticalAlignment = Alignment.CenterVertically,
+                            ) {
+                                Text(item.name, style = MaterialTheme.typography.bodyLarge)
+                                if (item.noteCount > 0) {
+                                    Text(
+                                        pluralStringResource(R.plurals.vocab_note_count, item.noteCount, item.noteCount),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
                         }
                     }
                 }
@@ -2508,53 +3806,67 @@ fun VoiceCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         animationSpec = tween(150),
                         label = "micRingLevel",
                     )
-                    Box(
+                    Surface(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .height(180.dp),
-                        contentAlignment = Alignment.Center,
+                            .shadow(elevation = 3.dp, shape = RoundedCornerShape(20.dp), ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
                     ) {
-                        Canvas(modifier = Modifier.size(180.dp)) {
-                            if (listening) {
-                                val baseRadius = size.minDimension / 2f * 0.33f
-                                val maxExtra = size.minDimension / 2f * 0.67f
-                                for (ring in 1..2) {
-                                    val t = (ringLevel * ring / 2f).coerceIn(0f, 1f)
-                                    drawCircle(
-                                        color = micColor.copy(alpha = (0.28f - ring * 0.08f) * (0.5f + ringLevel)),
-                                        radius = baseRadius + maxExtra * t,
-                                    )
+                        Column(
+                            modifier = Modifier.padding(16.dp),
+                            horizontalAlignment = Alignment.CenterHorizontally,
+                            verticalArrangement = Arrangement.spacedBy(12.dp),
+                        ) {
+                            Box(
+                                modifier = Modifier
+                                    .fillMaxWidth()
+                                    .height(180.dp),
+                                contentAlignment = Alignment.Center,
+                            ) {
+                                Canvas(modifier = Modifier.size(180.dp)) {
+                                    if (listening) {
+                                        val baseRadius = size.minDimension / 2f * 0.33f
+                                        val maxExtra = size.minDimension / 2f * 0.67f
+                                        for (ring in 1..2) {
+                                            val t = (ringLevel * ring / 2f).coerceIn(0f, 1f)
+                                            drawCircle(
+                                                color = micColor.copy(alpha = (0.28f - ring * 0.08f) * (0.5f + ringLevel)),
+                                                radius = baseRadius + maxExtra * t,
+                                            )
+                                        }
+                                    }
+                                }
+                                CircleIconButton(
+                                    onClick = { if (listening) stopListening() else startListening() },
+                                    contentDescription = stringResource(R.string.voice_mic_button),
+                                    containerColor = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primaryContainer,
+                                    contentColor = if (listening) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimaryContainer,
+                                    size = 96.dp,
+                                    hapticType = HapticFeedbackType.LongPress,
+                                ) {
+                                    MicIcon(modifier = Modifier.size(40.dp))
                                 }
                             }
-                        }
-                        CircleIconButton(
-                            onClick = { if (listening) stopListening() else startListening() },
-                            contentDescription = stringResource(R.string.voice_mic_button),
-                            containerColor = if (listening) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primaryContainer,
-                            contentColor = if (listening) MaterialTheme.colorScheme.onError else MaterialTheme.colorScheme.onPrimaryContainer,
-                            size = 96.dp,
-                            hapticType = HapticFeedbackType.LongPress,
-                        ) {
-                            MicIcon(modifier = Modifier.size(40.dp))
+                            Text(
+                                if (listening) stringResource(R.string.voice_listening) else stringResource(R.string.voice_tap_to_speak),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.fillMaxWidth(),
+                                textAlign = TextAlign.Center,
+                            )
+                            val shownText = listOf(transcript, partial).filter { it.isNotBlank() }.joinToString(" ")
+                            Text(
+                                shownText.ifBlank { stringResource(R.string.voice_transcript_hint) },
+                                style = MaterialTheme.typography.bodyLarge,
+                                color = if (shownText.isBlank()) {
+                                    MaterialTheme.colorScheme.outline
+                                } else {
+                                    MaterialTheme.colorScheme.onSurface
+                                },
+                            )
                         }
                     }
-                    Text(
-                        if (listening) stringResource(R.string.voice_listening) else stringResource(R.string.voice_tap_to_speak),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.fillMaxWidth(),
-                        textAlign = TextAlign.Center,
-                    )
-                    val shownText = listOf(transcript, partial).filter { it.isNotBlank() }.joinToString(" ")
-                    Text(
-                        shownText.ifBlank { stringResource(R.string.voice_transcript_hint) },
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = if (shownText.isBlank()) {
-                            MaterialTheme.colorScheme.outline
-                        } else {
-                            MaterialTheme.colorScheme.onSurface
-                        },
-                    )
                     val (saveSource, saveScale) = rememberPressScale()
                     Button(
                         onClick = {
@@ -2667,34 +3979,44 @@ fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
             val file = photoFile
             when {
                 file == null -> {
-                    Text(
-                        stringResource(R.string.photo_intro),
-                        style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    val (takeSource, takeScale) = rememberPressScale()
-                    Button(
-                        onClick = ::launchCamera,
-                        modifier = takeScale.fillMaxWidth(),
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .shadow(elevation = 3.dp, shape = RoundedCornerShape(20.dp), ambientColor = MaterialTheme.colorScheme.primary, spotColor = MaterialTheme.colorScheme.primary),
                         shape = RoundedCornerShape(20.dp),
-                        interactionSource = takeSource,
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
                     ) {
-                        CameraIcon(modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onPrimary)
-                        Spacer(Modifier.width(10.dp))
-                        Text(stringResource(R.string.photo_take), fontWeight = FontWeight.SemiBold)
-                    }
-                    val (galleryInteractionSource, galleryScale) = rememberPressScale()
-                    OutlinedButton(
-                        onClick = {
-                            pickMediaLauncher.launch(
-                                PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                        Column(modifier = Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+                            Text(
+                                stringResource(R.string.photo_intro),
+                                style = MaterialTheme.typography.bodyMedium,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                        },
-                        modifier = galleryScale.fillMaxWidth(),
-                        shape = RoundedCornerShape(20.dp),
-                        interactionSource = galleryInteractionSource,
-                    ) {
-                        Text(stringResource(R.string.photo_choose_gallery))
+                            val (takeSource, takeScale) = rememberPressScale()
+                            Button(
+                                onClick = ::launchCamera,
+                                modifier = takeScale.fillMaxWidth(),
+                                shape = RoundedCornerShape(20.dp),
+                                interactionSource = takeSource,
+                            ) {
+                                CameraIcon(modifier = Modifier.size(22.dp), tint = MaterialTheme.colorScheme.onPrimary)
+                                Spacer(Modifier.width(10.dp))
+                                Text(stringResource(R.string.photo_take), fontWeight = FontWeight.SemiBold)
+                            }
+                            val (galleryInteractionSource, galleryScale) = rememberPressScale()
+                            OutlinedButton(
+                                onClick = {
+                                    pickMediaLauncher.launch(
+                                        PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageOnly),
+                                    )
+                                },
+                                modifier = galleryScale.fillMaxWidth(),
+                                shape = RoundedCornerShape(20.dp),
+                                interactionSource = galleryInteractionSource,
+                            ) {
+                                Text(stringResource(R.string.photo_choose_gallery))
+                            }
+                        }
                     }
                 }
                 recognizing -> {
@@ -2776,6 +4098,337 @@ fun PhotoCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> 
                         interactionSource = photoSaveSource,
                     ) {
                         Text(stringResource(R.string.photo_save))
+                    }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+    }
+}
+
+private val InkColors = listOf(
+    Color.Black,
+    Color(0xFFD32F2F),
+    Color(0xFF1976D2),
+    Color(0xFF388E3C),
+    Color(0xFFF57C00),
+)
+
+/** Object-eraser hit radius — removes a whole stroke if any of its points falls this close to
+ *  the drag, not a pixel-level eraser (simplest fit for stroke-based recognition input). */
+private const val ERASER_RADIUS_PX = 40f
+
+private val StrokeWidths = listOf(3f, 6f, 10f)
+
+private enum class InkTool { PEN, HIGHLIGHTER, ERASER }
+
+/**
+ * Handwriting capture (D26): draw → Recognize (downloads the ink model on first use, then
+ * recognizes fully on-device) → editable text, mirroring Voice/Photo's review-before-save shape.
+ * Saves via [MainViewModel.captureInk], which reuses PHOTO's exact column shape — no new schema.
+ */
+@Composable
+fun HandwritingCaptureScreen(model: MainViewModel, onBack: () -> Unit, onSaved: () -> Unit) {
+    BackHandler(onBack = onBack)
+
+    val scope = rememberCoroutineScope()
+    val snackbarHost = remember { SnackbarHostState() }
+
+    var strokes by remember { mutableStateOf(listOf<InkStroke>()) }
+    var selectedColor by remember { mutableStateOf(InkColors.first()) }
+    var tool by remember { mutableStateOf(InkTool.PEN) }
+    var strokeWidth by remember { mutableFloatStateOf(StrokeWidths[1]) }
+    var canvasSize by remember { mutableStateOf(IntSize.Zero) }
+    var renderedFile by remember { mutableStateOf<File?>(null) }
+    var recognizedText by rememberSaveable { mutableStateOf("") }
+    var recognizing by remember { mutableStateOf(false) }
+    var saving by remember { mutableStateOf(false) }
+    var errorMessage by remember { mutableStateOf<String?>(null) }
+
+    fun eraseNear(offset: Offset) {
+        strokes = strokes.filterNot { it.isNear(offset, ERASER_RADIUS_PX) }
+    }
+    fun newStroke() = when (tool) {
+        InkTool.HIGHLIGHTER -> InkStroke(selectedColor, widthPx = strokeWidth * 3f, alpha = 0.35f)
+        else -> InkStroke(selectedColor, widthPx = strokeWidth)
+    }
+    fun startStroke(offset: Offset) {
+        if (tool == InkTool.ERASER) {
+            eraseNear(offset)
+            return
+        }
+        strokes = strokes + newStroke().withPoint(offset, System.currentTimeMillis())
+    }
+    fun addToStroke(offset: Offset) {
+        if (tool == InkTool.ERASER) {
+            eraseNear(offset)
+            return
+        }
+        if (strokes.isEmpty()) return
+        strokes = strokes.toMutableList().also {
+            it[it.lastIndex] = it.last().withPoint(offset, System.currentTimeMillis())
+        }
+    }
+    fun clearInk() {
+        strokes = emptyList()
+    }
+    fun undoStroke() {
+        strokes = strokes.dropLast(1)
+    }
+
+    val savedMsg = stringResource(R.string.handwriting_saved_snackbar)
+    val defaultErrorMsg = stringResource(R.string.handwriting_error)
+
+    Scaffold(
+        modifier = Modifier.fillMaxSize(),
+        containerColor = MaterialTheme.colorScheme.background,
+        snackbarHost = { SnackbarHost(snackbarHost) },
+    ) { padding ->
+        Column(
+            modifier = Modifier
+                .fillMaxSize()
+                .padding(padding)
+                .padding(horizontal = 20.dp)
+                .verticalScroll(rememberScrollState()),
+            verticalArrangement = Arrangement.spacedBy(16.dp),
+        ) {
+            Spacer(Modifier.height(8.dp))
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                TextButton(onClick = onBack) { Text(stringResource(R.string.back)) }
+            }
+            Text(stringResource(R.string.handwriting_capture_title), style = MaterialTheme.typography.headlineLarge)
+
+            val file = renderedFile
+            when {
+                file == null -> {
+                    Text(
+                        stringResource(R.string.handwriting_intro),
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Surface(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .height(320.dp)
+                            .onSizeChanged { canvasSize = it },
+                        shape = RoundedCornerShape(20.dp),
+                        color = MaterialTheme.colorScheme.surfaceContainerLowest,
+                        shadowElevation = 3.dp,
+                    ) {
+                        Canvas(
+                            modifier = Modifier
+                                .fillMaxSize()
+                                .pointerInput(Unit) {
+                                    // S Pen only (D27): a finger-down is never even consumed, so
+                                    // it falls through as a no-op touch instead of drawing or
+                                    // palm-smudging a stroke — the canvas is deaf to anything
+                                    // that isn't the stylus.
+                                    awaitEachGesture {
+                                        val down = awaitFirstDown(requireUnconsumed = false)
+                                        if (down.type != PointerType.Stylus) return@awaitEachGesture
+                                        down.consume()
+                                        startStroke(down.position)
+                                        while (true) {
+                                            val event = awaitPointerEvent()
+                                            val change = event.changes.firstOrNull { it.id == down.id } ?: break
+                                            if (change.changedToUpIgnoreConsumed()) {
+                                                change.consume()
+                                                break
+                                            }
+                                            if (change.positionChanged()) {
+                                                addToStroke(change.position)
+                                                change.consume()
+                                            }
+                                        }
+                                    }
+                                },
+                        ) {
+                            strokes.forEach { stroke ->
+                                val points = stroke.points
+                                if (points.size < 2) return@forEach
+                                val path = Path().apply {
+                                    moveTo(points.first().x, points.first().y)
+                                    for (i in 1 until points.size) lineTo(points[i].x, points[i].y)
+                                }
+                                drawPath(
+                                    path,
+                                    color = stroke.color.copy(alpha = stroke.alpha),
+                                    style = Stroke(width = stroke.widthPx, cap = StrokeCap.Round, join = StrokeJoin.Round),
+                                )
+                            }
+                        }
+                    }
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    ) {
+                        FilterChip(
+                            selected = tool == InkTool.PEN,
+                            onClick = { tool = InkTool.PEN },
+                            label = { Text(stringResource(R.string.handwriting_tool_pen)) },
+                        )
+                        FilterChip(
+                            selected = tool == InkTool.HIGHLIGHTER,
+                            onClick = { tool = InkTool.HIGHLIGHTER },
+                            label = { Text(stringResource(R.string.handwriting_tool_highlighter)) },
+                        )
+                        FilterChip(
+                            selected = tool == InkTool.ERASER,
+                            onClick = { tool = InkTool.ERASER },
+                            label = { Text(stringResource(R.string.handwriting_eraser)) },
+                        )
+                    }
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        InkColors.forEach { swatch ->
+                            val isSelected = tool != InkTool.ERASER && selectedColor == swatch
+                            Surface(
+                                onClick = {
+                                    selectedColor = swatch
+                                    if (tool == InkTool.ERASER) tool = InkTool.PEN
+                                },
+                                modifier = Modifier.size(32.dp),
+                                shape = CircleShape,
+                                color = swatch,
+                                border = if (isSelected) {
+                                    BorderStroke(2.dp, MaterialTheme.colorScheme.onSurface)
+                                } else {
+                                    BorderStroke(1.dp, MaterialTheme.colorScheme.outlineVariant)
+                                },
+                            ) {}
+                        }
+                        Spacer(Modifier.weight(1f))
+                        Row(
+                            modifier = Modifier
+                                .background(MaterialTheme.colorScheme.surfaceContainer, RoundedCornerShape(10.dp))
+                                .padding(2.dp),
+                        ) {
+                            StrokeWidths.forEach { width ->
+                                val isSelected = strokeWidth == width
+                                Surface(
+                                    onClick = { strokeWidth = width },
+                                    color = if (isSelected) MaterialTheme.colorScheme.surfaceContainerLowest else Color.Transparent,
+                                    shape = RoundedCornerShape(8.dp),
+                                ) {
+                                    Box(modifier = Modifier.size(28.dp), contentAlignment = Alignment.Center) {
+                                        Box(
+                                            Modifier
+                                                .size((width).dp.coerceAtMost(14.dp))
+                                                .background(MaterialTheme.colorScheme.onSurface, CircleShape),
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    errorMessage?.let {
+                        Text(it, style = MaterialTheme.typography.labelSmall, color = MaterialTheme.colorScheme.error)
+                    }
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = ::undoStroke, enabled = strokes.isNotEmpty()) {
+                            Text(stringResource(R.string.handwriting_undo))
+                        }
+                        OutlinedButton(onClick = ::clearInk, shape = RoundedCornerShape(20.dp)) {
+                            Text(stringResource(R.string.handwriting_clear))
+                        }
+                        val (recognizeSource, recognizeScale) = rememberPressScale()
+                        Button(
+                            onClick = {
+                                if (strokes.isEmpty() || recognizing) return@Button
+                                recognizing = true
+                                errorMessage = null
+                                scope.launch {
+                                    runCatching {
+                                        InkRecognitionEngine.ensureModelReady()
+                                        val text = InkRecognitionEngine.recognize(strokes)
+                                        val rendered = withContext(Dispatchers.IO) {
+                                            InkRecognitionEngine.renderToFile(strokes, canvasSize.width, canvasSize.height, model.photosDir)
+                                        }
+                                        text to rendered
+                                    }.onSuccess { (text, rendered) ->
+                                        recognizedText = text
+                                        renderedFile = rendered
+                                    }.onFailure {
+                                        errorMessage = it.message ?: defaultErrorMsg
+                                    }
+                                    recognizing = false
+                                }
+                            },
+                            enabled = !recognizing && strokes.isNotEmpty(),
+                            modifier = recognizeScale,
+                            shape = RoundedCornerShape(20.dp),
+                            interactionSource = recognizeSource,
+                        ) {
+                            Text(
+                                if (recognizing) {
+                                    stringResource(R.string.handwriting_recognizing)
+                                } else {
+                                    stringResource(R.string.handwriting_recognize)
+                                },
+                            )
+                        }
+                    }
+                }
+                else -> {
+                    val bitmap = remember(file) { BitmapFactory.decodeFile(file.path)?.asImageBitmap() }
+                    if (bitmap != null) {
+                        val frameShape = RoundedCornerShape(20.dp)
+                        Image(
+                            bitmap = bitmap,
+                            contentDescription = null,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(180.dp)
+                                .shadow(
+                                    elevation = 10.dp,
+                                    shape = frameShape,
+                                    ambientColor = MaterialTheme.colorScheme.primary,
+                                    spotColor = MaterialTheme.colorScheme.primary,
+                                )
+                                .clip(frameShape),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
+                    OutlinedTextField(
+                        value = recognizedText,
+                        onValueChange = { recognizedText = it },
+                        modifier = Modifier.fillMaxWidth(),
+                        placeholder = { Text(stringResource(R.string.handwriting_text_hint)) },
+                        minLines = 4,
+                        maxLines = 10,
+                        shape = RoundedCornerShape(20.dp),
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(
+                            onClick = {
+                                renderedFile = null
+                                clearInk()
+                                recognizedText = ""
+                            },
+                        ) {
+                            Text(stringResource(R.string.handwriting_try_again))
+                        }
+                        val (saveSource, saveScale) = rememberPressScale()
+                        Button(
+                            onClick = {
+                                saving = true
+                                model.captureInk(file.absolutePath, recognizedText) {
+                                    scope.launch { snackbarHost.showSnackbar(savedMsg) }
+                                    onSaved()
+                                }
+                            },
+                            modifier = saveScale,
+                            enabled = !saving,
+                            shape = RoundedCornerShape(20.dp),
+                            interactionSource = saveSource,
+                        ) {
+                            Text(stringResource(R.string.handwriting_save))
+                        }
                     }
                 }
             }

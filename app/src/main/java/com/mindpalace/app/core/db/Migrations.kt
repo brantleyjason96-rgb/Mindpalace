@@ -20,3 +20,12 @@ val MIGRATION_1_2 = object : Migration(1, 2) {
         }
     }
 }
+
+/** Adds the two nullable columns ATTACHMENT-source notes need (D25); existing rows are
+ *  unaffected (both default to NULL). */
+val MIGRATION_2_3 = object : Migration(2, 3) {
+    override suspend fun migrate(connection: SQLiteConnection) {
+        connection.execSQL("ALTER TABLE notes ADD COLUMN attachment_path TEXT")
+        connection.execSQL("ALTER TABLE notes ADD COLUMN attachment_file_name TEXT")
+    }
+}

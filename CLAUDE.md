@@ -8,7 +8,13 @@ photograph something → **saved instantly (save-first)** → sorted later by pl
 the right time → plus an **on-device, offline** AI pass at night. Kotlin, Jetpack Compose, Room 3.
 
 ## Non-negotiable rules
-1. **No INTERNET permission, ever.** `PrivacyManifestTest` enforces it; never weaken or skip it.
+1. **Default to no INTERNET permission.** One deliberate, owner-approved exception exists (D26,
+   2026-11-10): handwriting capture's ML Kit Digital Ink Recognition model has no bundled/offline
+   variant, so INTERNET + ACCESS_NETWORK_STATE are scoped to a one-time-per-language model
+   download only — recognition itself still runs on-device, and no note content ever leaves the
+   phone. Any OTHER network use still needs the same explicit discussion + sign-off as rule 2,
+   not a quiet reuse of this exception. `PrivacyManifestTest`'s approved-permissions list is the
+   enforcement point now (see its doc comment).
 2. **Never add any permission without Jason's explicit sign-off.** Propose it, say why, wait. When
    approved, record it in `docs/PERMISSIONS.md` and update the manifest test deliberately.
 3. **All canonical writes go through `NoteCommandHandler`** (audit + undo). UI never writes via DAOs.

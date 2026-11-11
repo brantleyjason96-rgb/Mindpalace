@@ -193,9 +193,165 @@ prompt and a live transcript while listening. On Save, the transcript goes strai
 `NoteCommandHandler.create` (`source = VOICE`, `transcript = ...`) — same save-first path as every
 other source. No raw audio is recorded or stored; only the transcript.
 
+## D22 — AI spike: llama.cpp vendored + built via NDK/CMake, measured on-device speed confirms D13
+Nov 9, 2026. Per D13/CLAUDE.md's instruction to "spike speed/battery before building around it,"
+before writing any proposals/WorkManager scaffolding: vendored llama.cpp source (pinned tag v0.9.0,
+`.git` stripped, `models/`+`docs/` pruned, ~68 MB) under `app/src/main/cpp/llama.cpp/`, added
+`app/src/main/cpp/CMakeLists.txt` (builds `llama`/`llama-common` as a subdirectory — its own
+examples/tools/tests/server stay off since those options default to `${LLAMA_STANDALONE}`, false
+when used as a subdirectory) and a minimal JNI bridge `ai_spike.cpp` exposing just
+`init`/`load`/`benchModel`/`unload`/`shutdown` (adapted from the upstream `examples/llama.android`
+reference app bundled in the vendored source, trimmed to the perf-measurement path only — no chat
+loop, no grammar, no sampling yet). Wired `ndkVersion`, `abiFilters` (arm64-v8a + x86_64), and
+`externalNativeBuild.cmake` into `app/build.gradle.kts`, with `GGML_BACKEND_DL=ON` +
+`GGML_CPU_ALL_VARIANTS=ON` so ggml picks the best CPU kernel (KleidiAI/SME2 etc.) for the actual
+device at runtime instead of a single compile-time target.
+
+Build gotcha: `ggml_backend_load_all_from_path()` dlopens the per-CPU-variant backend `.so` files
+from `context.applicationInfo.nativeLibraryDir` at runtime — but AGP's modern default packages
+native libs page-aligned straight into the APK without extracting them to that directory, so the
+dir existed but was empty and model load failed with "no backends are loaded". Fixed with
+`packaging.jniLibs.useLegacyPackaging = true`, which forces real extraction.
+
+Result on Jason's Samsung S26 Ultra, Qwen3 4B Q4_K_M (2.32 GiB, 4.02B params), 4 threads: **25.3
+tok/s prompt processing, 14.1 tok/s token generation** — matches/exceeds D13's PocketPal-reported
+~10 tok/s estimate. Budget math holds: ~300-token prompt + ~80-token JSON proposal ≈ 18 s/note ≈
+~200 notes/hour, inside the 150–250/hour target. **Spike passed — proceed to the real GBNF
+grammar + proposals/WorkManager architecture next**, building on this native toolchain rather than
+re-deriving it.
+
+A temporary debug-only "AI spike" button lives in Settings (reads the model from
+`getExternalFilesDir(null)/model.gguf`, a fixed path for `adb push` convenience) — remove once the
+real AI setup screen (file picker) exists.
+
+## D23 — Night-loop v1: GBNF grammar + proposals pipeline, summary cutoff at 50 words
+Nov 9, 2026. Built the real completion pipeline on top of D22's engine: `AiEngine` (renamed from
+the spike's `AiSpike`) now exposes `loadModel`/`complete`/`unloadModel`, where `complete()` is one
+grammar-constrained, non-streaming JNI call (`runCompletion` in `ai_spike.cpp`) — tokenizes a
+system+user prompt through the model's own chat template (`common_chat_templates_init` /
+`common_chat_format_single`, same approach as the upstream reference app), decodes it, then samples
+token-by-token with a `common_sampler` constrained by a user GBNF grammar until EOG or a token cap.
+No chat history is kept between calls — each note gets an independent request, matching "no
+big-picture judgment" from the plain-English description given to Jason.
+
+`AiPrompt.GRAMMAR` constrains the model to exactly `{"summary": string|null, "proposals": [{"kind":
+CATEGORY|TAG|TOPIC|PERSON|PLACE, "value": string, "evidence": string, "confidence": 0.00-1.00}]}`.
+`AiProposalValidator` then enforces what the grammar can't: `evidence` must be a literal substring
+of the note's own text (CLAUDE.md's anti-hallucination rule), confidence must clear 0.5, and the
+summary is dropped unless `AiPrompt.needsSummary()` independently agrees the note is over 50 words
+— the model is never trusted to have obeyed that instruction on its own (owner request, Nov 9).
+
+`AiNightRunner` is the orchestrator: one model load, then one `AiEngine.complete()` per note from
+`NoteDao.changedSince(lastRun)`, writing validated TOPIC/PERSON/PLACE hits + any summary into
+`ai_index` (ungated, auto-shown) and every proposal into `proposals` as `PENDING` (gated, needs
+approval) — never touching the note itself. Logs start/finish/outcome to `ai_runs`. Wired into
+`AppContainer` as `aiNightRunner`; triggered for now only from the same debug Settings section as
+the spike ("Run on all notes", `since = 0`) — no WorkManager scheduling, no review UI, no file
+picker yet. Those are the next pieces, in that order.
+
+Validated on-device (Jason's S26 Ultra, real 5-note database, Qwen3 4B Q4_K_M): run completed in
+~113s (≈22.5s/note, matching D22's budget math), produced 3 valid `CATEGORY` proposals with
+evidence quotes that are exact substrings of the actual transcripts, 0 `ai_index` rows (all 5 notes
+were under 50 words, so no summary was correctly expected) — confirms the grammar, validator, and
+word-count cutoff all behave as designed on real hardware, not just in theory.
+
 ## D14 — Geofenced place reminders are in scope
 Nov 9, 2026. Owner decision. Cost accepted: location permission (background access for reliable
 triggers) and likely Google Play Services geofencing. To be recorded in `docs/PERMISSIONS.md` when
 built; `PrivacyManifestTest` gets a deliberate, documented update then (never silently loosened).
 Time-based reminders ship first; places follow. Still open: whether Play Services geofencing is
 acceptable vs. a Play-Services-free fallback.
+
+## D24 — Nightly AI scheduling via WorkManager; WAKE_LOCK + FOREGROUND_SERVICE approved
+Nov 10, 2026. `AiNightRunner` (D23) had no scheduler — the only way to run it was the debug "Run
+on all notes" button in Settings. Added `androidx.work:work-runtime` 2.12.0 and `AiNightWorker`
+(`CoroutineWorker`), scheduled as a daily `PeriodicWorkRequest` with `setRequiresCharging(true)` +
+`setRequiresDeviceIdle(true)` + `setRequiresBatteryNotLow(true)` — the standard "maintenance
+window" shape, so the night loop never costs the user anything they'd notice. `since` comes from
+the new `AiRunDao.lastSucceededFinishedAt()` query (null → process everything). A best-effort
+`PowerManager.currentThermalStatus` check retries rather than runs while the phone is hot — there's
+no `Constraints` flag for thermal state. If no model file exists at `AiModelConfig.modelPath`
+(shared with the debug buttons so they can't drift apart), the worker is a silent no-op rather than
+a failure WorkManager would keep retrying.
+
+The library transitively requires `android.permission.WAKE_LOCK` (briefly held while work runs, so
+the system doesn't suspend the CPU mid-run) and declares `android.permission.FOREGROUND_SERVICE`
+in its own manifest (defensive — only actually used for expedited/long-running work, which this
+app doesn't request). Both local-only, no network, no new data access. **Owner sign-off: 2026-11-10
+(in-session)** — see `docs/PERMISSIONS.md`; `PrivacyManifestTest`'s approved list updated in the
+same commit.
+
+Tried first: manually disabling WorkManager's default ContentProvider-based init via the
+documented manifest `tools:node="remove"` recipe, so test and prod would take the same manual-init
+path. The merger reported "no other declaration present" for that removal (silently not applying)
+under this AGP/Robolectric combination, and manual `WorkManager.initialize()` then collided with
+the default init that already happened ("already initialized"). Reverted the manifest change;
+`MindPalaceApplication.ensureWorkManagerInitialized()` instead tries `getInstance()` first and
+only calls `initialize()` if that throws — correct on a real device (provider already ran) and
+under Robolectric (it doesn't).
+
+Still open, in order (next pieces): AI setup screen (model-file picker instead of the hardcoded
+path, schedule/limit controls), AI run history view over `ai_runs`.
+
+## D25 — Attach-file capture; a pre-existing BOOT_COMPLETED crash found and fixed
+Nov 10, 2026. Added a fourth capture mode alongside Quick Text/Voice/Scan: `NoteSource.ATTACHMENT`
+— any file type via the system document picker (`ActivityResultContracts.OpenDocument`), copied
+into a new app-private `attachmentsDir` (mirrors `photosDir`), no review step (unlike Voice/Photo,
+there's no transcript/OCR text to correct before saving). Schema v2 → v3: two new nullable columns
+on `notes` (`attachment_path`, `attachment_file_name`) via `MIGRATION_2_3`, schema JSON exported
+(`app/schemas/.../3.json`), migration test added. `NoteCommandHandler.applyRules` and
+`AiNightRunner`'s searchable-text join both now include the attachment filename, so rules/AI can
+match on it (e.g. "invoice" in a filename → Finance category) same as any other note text.
+
+Also, owner decisions recorded for two other backlog items while scoping this: manual
+category-override-at-capture-time (when built) will be a **permanent** override — a hand-picked
+category always wins, the rule engine never touches that note's category again. Handwriting
+capture (S-Pen ink → text) is confirmed wanted; scoped as its own follow-up task, not bundled into
+this one (new canvas UI + ML Kit Digital Ink Recognition dependency + new capture screen is a
+bigger unit of work). Privacy Level: Biometric toggle — declined, not building it.
+
+**Unrelated pre-existing bug found and fixed in the same pass:** a real device reboot during this
+session's testing surfaced `BootReceiver` and `ReminderAlarmReceiver` manifest-declared at the
+wrong path — `.reminders.X` (resolves to `com.mindpalace.app.reminders.X`, package root) instead
+of `.core.reminders.X` (their actual package, `com.mindpalace.app.core.reminders`). Any
+`BOOT_COMPLETED` broadcast crashed the whole app (`ClassNotFoundException` in `handleReceiver`,
+force-finishing the foreground activity too); reminder alarms firing would have hit the same
+`ClassNotFoundException` for `ReminderAlarmReceiver`, meaning **no reminder notification has ever
+actually fired** since D19. Neither path is covered by Robolectric's manifest parsing (it doesn't
+validate that a declared receiver class resolves the way a real device's `PackageManager` does at
+broadcast-dispatch time), which is why 50 passing unit tests never caught it. Fixed by correcting
+both `android:name` paths in `AndroidManifest.xml`; confirmed on-device (a real
+`BOOT_COMPLETED` no longer crashes the app). No test added for this specific failure mode — would
+need an instrumented (not Robolectric) test to actually exercise manifest-to-class resolution;
+flagged here instead so it doesn't silently regress if someone "simplifies" these paths back.
+
+## D26 — Handwriting capture; the first (and only) exception to "no INTERNET, ever"
+Nov 10, 2026. Scoping handwriting capture (confirmed wanted, D25) surfaced a real conflict:
+ML Kit Digital Ink Recognition has **no bundled/offline model**, unlike the OCR text-recognition
+model (D17) — the handwriting model can only be obtained via `RemoteModelManager`'s dynamic
+download, which needs `INTERNET` + `ACCESS_NETWORK_STATE`. This directly contradicted rule 1's
+absolute "never," so it went back to the owner for an explicit decision rather than being quietly
+built around. Two rounds of confirmation: first a general question surfaced the keyboard-based
+alternative (Samsung's own S-Pen handwriting-to-text IME, zero dependency/permission); owner chose
+the real ML Kit path anyway. Given the scale of what that overturns, asked a second, more explicit
+confirmation naming exactly what changes (INTERNET permission, `PrivacyManifestTest`'s dedicated
+"no INTERNET" test, rule 1's wording, the in-app "100% On-Device & Private" promise) — owner
+confirmed understanding and approved.
+
+Scope of the exception, deliberately narrow: INTERNET/ACCESS_NETWORK_STATE exist **only** to
+download the ink recognition model, once per language, cached on-device afterward. Recognition
+itself runs fully on-device; no note content, transcript, or recognized text is ever transmitted.
+Any future use of these permissions for anything else needs its own sign-off, not a free pass from
+this one.
+
+Implementation reuses PHOTO's exact data shape rather than adding new columns: `NoteSource.INK`,
+the rendered ink strokes saved as a PNG via the existing `imagePath` column (same `photosDir`),
+recognized text via the existing `ocrText` column — same "an image + its recognized text" shape,
+so no schema migration needed. `HandwritingCaptureScreen` mirrors Voice/Photo's review-before-save
+flow: draw → Recognize → editable text field → Save. English-only for now (`en-US` hardcoded) —
+ponytail: add a language picker when multi-language actually matters, not speculatively.
+
+Updated in the same pass: `PrivacyManifestTest` (removed the two dedicated "no INTERNET"/"no
+ACCESS_NETWORK_STATE" tests, which would now permanently fail; added both to the approved-list
+test with a new test asserting they're present), `docs/PERMISSIONS.md`, and CLAUDE.md rule 1's
+wording (from an absolute "never" to "default to no, with this one documented, scoped exception").

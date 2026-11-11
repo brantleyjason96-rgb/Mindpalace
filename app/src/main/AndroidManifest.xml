@@ -3,22 +3,23 @@
     xmlns:tools="http://schemas.android.com/tools">
 
     <!--
-      PRIVACY CONTRACT: Mind Palace is fully offline by design (docs/DECISIONS.md D4).
-      This manifest must never declare android.permission.INTERNET or any network access.
-      PrivacyManifestTest fails the build if INTERNET ever appears here.
-      Adding ANY permission requires the owner's explicit sign-off.
+      PRIVACY CONTRACT: Mind Palace is offline-by-default (docs/DECISIONS.md D4). The one
+      deliberate exception is INTERNET, owner-approved 2026-11-10 (D26) for a single purpose:
+      downloading the handwriting recognition model once per language. Recognition itself still
+      runs fully on-device after that; no note content is ever sent anywhere. Adding any OTHER
+      permission still requires the owner's explicit sign-off (rule 2, unchanged).
     -->
 
     <!-- Sign-off: 2026-11-09 (docs/PERMISSIONS.md, docs/DECISIONS.md D15). Mic audio only, for
          on-device SpeechRecognizer; no audio is ever written to disk. -->
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- com.google.mlkit:text-recognition's transitive Play-Services-base manifest declares
-         these defensively, unconditionally, even for the fully-bundled/on-device model this app
-         uses (docs/DECISIONS.md D17). OCR never makes a network call, so they're stripped here
-         rather than silently accepted — PrivacyManifestTest would otherwise fail the build. -->
-    <uses-permission android:name="android.permission.INTERNET" tools:node="remove" />
-    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" tools:node="remove" />
+    <!-- Sign-off: 2026-11-10 (docs/PERMISSIONS.md, docs/DECISIONS.md D26). Handwriting capture's
+         ML Kit Digital Ink Recognition model is dynamic-download only (no bundled variant exists,
+         unlike the OCR text-recognition model in D17) — the one deliberate exception to this
+         app's zero-network design. -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
 
     <!-- Photo capture uses the SYSTEM camera app via an implicit intent (no CAMERA permission
          of our own); declared optional so devices without a camera can still install. -->
@@ -65,13 +66,13 @@
 
         <!-- Fires a notification when a reminder's time arrives. -->
         <receiver
-            android:name=".reminders.ReminderAlarmReceiver"
+            android:name=".core.reminders.ReminderAlarmReceiver"
             android:exported="false" />
 
         <!-- AlarmManager alarms are cleared on reboot; this re-schedules every still-active
              TIME reminder whose time is still in the future. -->
         <receiver
-            android:name=".reminders.BootReceiver"
+            android:name=".core.reminders.BootReceiver"
             android:exported="false">
             <intent-filter>
                 <action android:name="android.intent.action.BOOT_COMPLETED" />

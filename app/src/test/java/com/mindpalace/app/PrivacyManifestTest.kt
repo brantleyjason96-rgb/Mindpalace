@@ -4,16 +4,16 @@ import android.content.Context
 import android.content.pm.PackageManager
 import androidx.test.core.app.ApplicationProvider
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
 /**
- * PRIVACY GATE (plan §3.6 + §16: "no INTERNET permission … a test that fails if it appears").
- * These read the MERGED manifest, so they fail even if a permission sneaks in via a library's
- * manifest-merger rule. Adding ANY permission requires the owner's sign-off (D4).
+ * PRIVACY GATE (plan §3.6 + §16: originally "no INTERNET permission … a test that fails if it
+ * appears", narrowed by D26 — see below). These read the MERGED manifest, so they fail even if a
+ * permission sneaks in via a library's manifest-merger rule. Adding ANY permission requires the
+ * owner's sign-off (D4/rule 2).
  *
  * One known exception: androidx.core merges in
  * `com.mindpalace.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION` — an app-private,
@@ -25,6 +25,15 @@ import org.robolectric.annotation.Config
  *
  * POST_NOTIFICATIONS / SCHEDULE_EXACT_ALARM / RECEIVE_BOOT_COMPLETED are sign-off-approved
  * (docs/PERMISSIONS.md, D19) for time-based reminders only; still no network.
+ *
+ * WAKE_LOCK / FOREGROUND_SERVICE are sign-off-approved (docs/PERMISSIONS.md, D24), transitively
+ * required by WorkManager for nightly AI scheduling; local-only, no network.
+ *
+ * INTERNET / ACCESS_NETWORK_STATE are sign-off-approved (docs/PERMISSIONS.md, D26) — the one
+ * deliberate exception to this app's zero-network design, scoped to a single purpose:
+ * downloading the handwriting recognition model once per language. Recognition itself still runs
+ * fully on-device; no note content is ever sent anywhere. This is why there's no longer a
+ * dedicated "no INTERNET permission" test — the approved-list test below is the gate now.
  */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [33])
@@ -41,6 +50,10 @@ class PrivacyManifestTest {
             "android.permission.POST_NOTIFICATIONS",
             "android.permission.SCHEDULE_EXACT_ALARM",
             "android.permission.RECEIVE_BOOT_COMPLETED",
+            "android.permission.WAKE_LOCK",
+            "android.permission.FOREGROUND_SERVICE",
+            "android.permission.INTERNET",
+            "android.permission.ACCESS_NETWORK_STATE",
         )
 
     private fun requestedPermissions(): List<String> {
@@ -50,13 +63,10 @@ class PrivacyManifestTest {
     }
 
     @Test
-    fun `no INTERNET permission`() {
-        assertFalse(requestedPermissions().contains("android.permission.INTERNET"))
-    }
-
-    @Test
-    fun `no ACCESS_NETWORK_STATE permission`() {
-        assertFalse(requestedPermissions().contains("android.permission.ACCESS_NETWORK_STATE"))
+    fun `INTERNET is scoped to the handwriting model download only, per D26`() {
+        val perms = requestedPermissions()
+        assertEquals(true, perms.contains("android.permission.INTERNET"))
+        assertEquals(true, perms.contains("android.permission.ACCESS_NETWORK_STATE"))
     }
 
     @Test

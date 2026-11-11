@@ -9,7 +9,7 @@ import kotlinx.serialization.Serializable
  */
 
 /** How a note first entered the palace (§6 notes.source). */
-enum class NoteSource { TEXT, VOICE, PHOTO, SHARE }
+enum class NoteSource { TEXT, VOICE, PHOTO, SHARE, ATTACHMENT, INK }
 
 /** Lifecycle status of a note (§6 notes.status). */
 enum class NoteStatus { INBOX, ACTIVE, DONE, ARCHIVED }

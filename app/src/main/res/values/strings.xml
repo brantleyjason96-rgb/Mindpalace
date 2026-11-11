@@ -9,6 +9,65 @@
     <string name="saved_indicator">Saved (rev %1$d)</string>
     <string name="saved_toast">Saved to Mind Palace Inbox</string>
 
+    <!-- Bottom-tab shell (design pass matching the Stitch mockup) -->
+    <string name="tab_capture">Capture</string>
+    <string name="tab_timeline">Timeline</string>
+    <string name="tab_vault">Vault</string>
+    <string name="tab_privacy">Privacy &amp; Rules</string>
+    <string name="capture_tab_subtitle">Speak, type, or snap something — it saves instantly, sorted later.</string>
+    <plurals name="inbox_waiting">
+        <item quantity="one">%d note waiting</item>
+        <item quantity="other">%d notes waiting</item>
+    </plurals>
+    <string name="review_inbox_hint">Not yet sorted into a category.</string>
+    <string name="review_inbox_button">Review</string>
+    <string name="vault_subtitle">Notebooks and the people, topics, and places your notes reference.</string>
+    <string name="vocab_search_hint">Search</string>
+    <string name="vocab_search_empty">No matches.</string>
+    <string name="vocab_sort_recent">Recently added</string>
+    <string name="vocab_sort_alphabetical">A–Z</string>
+    <string name="vocab_sort_most_notes">Most notes</string>
+    <plurals name="vocab_note_count">
+        <item quantity="one">%1$d note</item>
+        <item quantity="other">%1$d notes</item>
+    </plurals>
+    <string name="privacy_assurance_title">Air-gapped by construction</string>
+    <string name="privacy_assurance_body">Mind Palace has no INTERNET permission — there is no network socket in the app to send your notes through, ever. Everything lives in an on-device Room database.</string>
+    <string name="mode_quick_text">Quick Text</string>
+    <string name="mode_voice">Voice</string>
+    <string name="mode_scan">Scan</string>
+    <string name="mode_attach">Attach</string>
+    <string name="mode_write">Write</string>
+    <string name="draft_active_label">Local draft active</string>
+    <string name="draft_word_count">%1$d words • %2$d chars</string>
+    <string name="notebook_preview_label">Notebook:</string>
+    <string name="awaiting_triage_title">Awaiting triage</string>
+    <string name="capture_footer_quote">"The mind is for having ideas, not holding them." On-device only — nothing here is ever sent anywhere.</string>
+    <string name="ai_proposals_title">AI proposals</string>
+    <string name="ai_proposals_empty">Nothing waiting for review. Run the night loop from Settings to generate proposals.</string>
+    <string name="ai_proposal_confidence">%1$d%% confident</string>
+    <string name="ai_proposal_approve">Approve</string>
+    <string name="ai_proposal_reject">Reject</string>
+    <string name="ai_proposals_section_title">AI proposals</string>
+    <string name="open_ai_proposals">Open AI proposals</string>
+    <string name="ai_setup_section_title">AI</string>
+    <string name="open_ai_setup">Open AI Setup</string>
+    <string name="open_ai_run_history">Open AI Run History</string>
+    <string name="ai_setup_title">AI setup</string>
+    <string name="ai_setup_model_section">Model file</string>
+    <string name="ai_setup_no_model">No model installed yet. Choose a .gguf file to enable the AI night loop.</string>
+    <string name="ai_setup_model_installed">Model installed (%1$d MB).</string>
+    <string name="ai_setup_copying">Copying model…</string>
+    <string name="ai_setup_choose_model">Choose model file…</string>
+    <string name="ai_setup_schedule_section">Schedule</string>
+    <string name="ai_setup_schedule_body">Runs automatically once a day while charging, idle, and battery isn\'t low. Not configurable yet.</string>
+    <string name="ai_setup_run_now">Run now</string>
+    <string name="ai_setup_run_started">Started — check AI Run History shortly.</string>
+    <string name="ai_run_history_title">AI run history</string>
+    <string name="ai_run_history_empty">No AI runs yet.</string>
+    <string name="ai_run_duration">Took %1$d s</string>
+    <string name="ai_run_notes_processed">%1$d notes processed</string>
+
     <!-- Polished UI -->
     <string name="header_subtitle_zero">Nothing here yet</string>
     <plurals name="header_subtitle">
@@ -28,6 +87,9 @@
     <string name="source_voice">Voice</string>
     <string name="source_photo">Photo</string>
     <string name="source_share">Shared</string>
+    <string name="source_attachment">File</string>
+    <string name="source_ink">Handwriting</string>
+    <string name="attachment_body_label">Attached: %1$s</string>
     <string name="status_inbox">Inbox</string>
     <string name="status_active">Active</string>
     <string name="status_done">Done</string>
@@ -46,6 +108,37 @@
     <string name="save">Save</string>
     <string name="note_saved">Note updated</string>
     <string name="clear_search">Clear</string>
+    <string name="copy_note_text">Copy</string>
+
+    <!-- Thought Detail: revision history, derived facts, inline AI suggestions -->
+    <string name="pending_ai_suggestions_title">AI suggestions for this note</string>
+    <string name="derived_facts_title">Why this was filed here</string>
+    <string name="derived_field_category">Category</string>
+    <string name="derived_field_tag">Tag</string>
+    <string name="derived_field_due_at">Due</string>
+    <string name="derived_field_person">Person</string>
+    <string name="derived_field_place">Place</string>
+    <string name="derived_field_topic">Topic</string>
+    <string name="origin_system">Default</string>
+    <string name="origin_user">You set this</string>
+    <string name="origin_rule">Rule #%1$s</string>
+    <string name="origin_ai">AI suggested (run %1$s)</string>
+    <string name="origin_unknown">Unknown origin</string>
+    <string name="revision_history_title">Revision history</string>
+    <string name="revision_current">Current</string>
+    <string name="revision_revert">Revert to this</string>
+    <string name="revision_words_added">+%1$d words</string>
+    <string name="revision_words_removed">-%1$d words</string>
+    <string name="revision_action_create">Created</string>
+    <string name="revision_action_update">Edited</string>
+    <string name="revision_action_status">Status changed</string>
+    <string name="revision_action_delete">Deleted</string>
+    <string name="revision_action_restore">Restored</string>
+    <string name="revision_action_undo">Undo</string>
+    <string name="revision_actor_user">By you</string>
+    <string name="revision_actor_rule">By a rule</string>
+    <string name="revision_actor_ai">By AI (approved)</string>
+    <string name="revision_actor_system">Automatic</string>
     <string name="settings">Settings</string>
     <string name="export_section_title">Export</string>
     <string name="export_privacy_note">Exports stay on this device until you choose where to send them.</string>
@@ -98,6 +191,26 @@
     <string name="photo_ocr_hint">Recognized text will appear here — fix anything before saving.</string>
     <string name="photo_save">Save note</string>
     <string name="photo_saved_snackbar">Photo note saved to Inbox</string>
+
+    <!-- Handwriting capture (D26) -->
+    <string name="handwriting_capture_title">Handwriting</string>
+    <string name="handwriting_intro">Write below with your S Pen — finger touches are ignored so a resting palm never smudges a stroke. The first use needs a one-time download of the handwriting model.</string>
+    <string name="handwriting_clear">Clear</string>
+    <string name="handwriting_eraser">Eraser</string>
+    <string name="handwriting_promo_title">Handwritten Note</string>
+    <string name="handwriting_promo_badge">Ready</string>
+    <string name="handwriting_promo_subtitle">S Pen / finger ready — ink canvas with on-device recognition</string>
+    <string name="handwriting_undo">Undo</string>
+    <string name="handwriting_tool_pen">Pen</string>
+    <string name="handwriting_tool_highlighter">Highlighter</string>
+    <string name="handwriting_stroke_width">Width</string>
+    <string name="handwriting_recognize">Recognize</string>
+    <string name="handwriting_recognizing">Recognizing…</string>
+    <string name="handwriting_error">Couldn\'t read that handwriting — try again</string>
+    <string name="handwriting_text_hint">Recognized text will appear here — fix anything before saving.</string>
+    <string name="handwriting_try_again">Try again</string>
+    <string name="handwriting_save">Save note</string>
+    <string name="handwriting_saved_snackbar">Handwriting note saved to Inbox</string>
 
     <!-- Categories -->
     <string name="categories_section_title">Categories</string>

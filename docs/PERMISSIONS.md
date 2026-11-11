@@ -29,3 +29,40 @@ rule 2). `PrivacyManifestTest` is updated deliberately in the same commit as any
   before a reboot silently never fires.
 - **Scope:** On boot, re-schedules every still-active TIME reminder whose time is still in the
   future. No network, no other side effects.
+
+## WAKE_LOCK
+- **Added:** 2026-11-10, D24.
+- **Why:** Transitively required by `androidx.work:work-runtime` (nightly AI scheduling). Held
+  briefly by WorkManager itself while a scheduled job runs, so the system doesn't suspend the CPU
+  mid-run.
+- **Scope:** Only held during the once-daily AI night-loop job, which only runs while charging,
+  idle, and battery isn't low. No network, no other side effects.
+- **Sign-off:** owner, 2026-11-10 (in-session).
+
+## FOREGROUND_SERVICE
+- **Added:** 2026-11-10, D24.
+- **Why:** Declared unconditionally in `androidx.work:work-runtime`'s own manifest. Mind Palace
+  does not use WorkManager's expedited/foreground-service work mode (only a plain
+  `PeriodicWorkRequest`), so this permission is never actually exercised — it ships because the
+  library declares it defensively for apps that do use that mode.
+- **Scope:** Unused by this app in practice. No network, no other side effects.
+- **Sign-off:** owner, 2026-11-10 (in-session).
+
+## INTERNET
+- **Added:** 2026-11-10, D26.
+- **Why:** Handwriting capture's ML Kit Digital Ink Recognition has no bundled/offline model
+  variant (unlike the OCR text-recognition model, D17) — the handwriting model can only be
+  obtained via a one-time dynamic download. This is the one deliberate exception to Mind
+  Palace's zero-network design; CLAUDE.md rule 1 updated accordingly.
+- **Scope:** Used only to download the ink recognition model (once per language, cached
+  afterward). Recognition itself, and everything else in the app, still runs fully on-device —
+  no note content, transcript, or OCR/ink text is ever sent anywhere.
+- **Sign-off:** owner, 2026-11-10 (in-session, explicit — confirmed understanding that this
+  retires the absolute "never" in rule 1 for this one path).
+
+## ACCESS_NETWORK_STATE
+- **Added:** 2026-11-10, D26.
+- **Why:** ML Kit's `RemoteModelManager`/`DownloadConditions` checks network state (e.g. to
+  require Wi-Fi) before attempting the one-time model download above.
+- **Scope:** Same as INTERNET — read-only connectivity check, no other use.
+- **Sign-off:** owner, 2026-11-10 (in-session).
