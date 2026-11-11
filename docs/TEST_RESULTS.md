@@ -1,5 +1,11 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 01 step 1d device check — PASSED (SM-S948U, installed over existing app)
+
+All four manual checks passed: command-error snackbar, revert-with-unsaved-edits confirmation,
+notification-open-after-rotation (no stale re-navigation, not hidden behind another screen), and
+two status-advancing swipes on the same note both applying. Merged to `main` (`78fe013`).
+
 ## 2026-11-11 — Plan 01 step 1d (crash handling, revert safety, note-detail load, stale swipe) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
