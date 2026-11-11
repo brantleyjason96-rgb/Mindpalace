@@ -23,9 +23,11 @@ import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Before
+import org.junit.Ignore
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -336,6 +338,201 @@ class NoteCommandHandlerTest {
             CreateNoteRequest(source = NoteSource.ATTACHMENT, attachmentPath = "/data/attachments/x.pdf", attachmentFileName = "x.pdf"),
         )
         assertEquals("x.pdf", db.noteDao().byId(note.id)?.attachmentFileName)
+    }
+
+    // ------------------------------------------------------------------ plan 02 §3.1 (untagged)
+
+    @Test
+    fun `undo of soft delete restores the note`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "temp"))
+        clock = 11_000
+        handler.softDelete(note.id)
+        val deleteAudit = db.auditDao().recentFor("note", note.id, 1).single()
+
+        clock = 12_000
+        handler.undo(deleteAudit.id)
+
+        val restored = db.noteDao().byId(note.id)!!
+        assertNull(restored.deletedAt)
+        assertEquals(3, restored.revision)
+    }
+
+    @Test
+    fun `undo of unknown audit id throws`() = runTest {
+        try {
+            handler.undo(999L)
+            fail("expected IllegalArgumentException")
+        } catch (ignored: IllegalArgumentException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `no-op edits write no audit`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        handler.updateRawText(note.id, "a")
+        handler.setStatus(note.id, NoteStatus.INBOX)
+
+        val after = db.noteDao().byId(note.id)!!
+        assertEquals(1, after.revision)
+        assertEquals(1, db.auditDao().count())
+    }
+
+    @Test
+    fun `editing a soft-deleted note throws NoteMissing`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        handler.softDelete(note.id)
+
+        try {
+            handler.updateRawText(note.id, "b")
+            fail("expected NoteMissingException")
+        } catch (ignored: NoteMissingException) {
+            // expected
+        }
+        try {
+            handler.setStatus(note.id, NoteStatus.DONE)
+            fail("expected NoteMissingException")
+        } catch (ignored: NoteMissingException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `restore of a live note is a no-op`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        handler.restore(note.id)
+
+        val after = db.noteDao().byId(note.id)!!
+        assertEquals(1, after.revision)
+        assertNull(after.deletedAt)
+        assertEquals(1, db.auditDao().count())
+    }
+
+    @Test
+    fun `audit snapshots record before and after`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        clock = 11_000
+        handler.updateRawText(note.id, "b")
+
+        val audit = db.auditDao().recentFor("note", note.id, 1).single()
+        val before = audit.before!!
+        val after = audit.after!!
+        assertTrue(before.contains("\"revision\":1"))
+        assertTrue(after.contains("\"revision\":2"))
+        assertTrue(after.contains("\"rawText\":\"b\""))
+    }
+
+    @Test
+    fun `approving a CATEGORY proposal writes the matching derived row`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "note"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1", noteId = note.id, kind = ProposalKind.CATEGORY, newValue = "Personal",
+                evidenceQuote = "note", confidence = 0.9f, runId = "run-1",
+                state = ProposalState.PENDING, createdAt = clock, updatedAt = clock,
+            ),
+        )
+        handler.approveProposal("p1")
+
+        assertEquals(ProposalState.APPROVED, db.proposalDao().byId("p1")!!.state)
+        val derived = db.derivedDao().forNote(note.id).single { it.field == DerivedField.CATEGORY && it.origin == "ai:run-1" }
+        assertEquals("Personal", derived.value)
+    }
+
+    @Test
+    fun `approving a TAG proposal writes the matching derived row`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "note"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1", noteId = note.id, kind = ProposalKind.TAG, newValue = "urgent",
+                evidenceQuote = "note", confidence = 0.9f, runId = "run-1",
+                state = ProposalState.PENDING, createdAt = clock, updatedAt = clock,
+            ),
+        )
+        handler.approveProposal("p1")
+
+        val derived = db.derivedDao().forNote(note.id).single { it.field == DerivedField.TAG }
+        assertEquals("urgent", derived.value)
+        assertEquals("ai:run-1", derived.origin)
+    }
+
+    @Test
+    fun `approving a TOPIC proposal writes the matching derived row`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "note"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1", noteId = note.id, kind = ProposalKind.TOPIC, newValue = "Pacing",
+                evidenceQuote = "note", confidence = 0.9f, runId = "run-1",
+                state = ProposalState.PENDING, createdAt = clock, updatedAt = clock,
+            ),
+        )
+        handler.approveProposal("p1")
+
+        val derived = db.derivedDao().forNote(note.id).single { it.field == DerivedField.TOPIC }
+        assertEquals("Pacing", derived.value)
+        assertTrue(db.topicDao().observeAll().first().any { it.name == "Pacing" })
+    }
+
+    @Test
+    fun `approving a PLACE proposal writes the matching derived row`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "note"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1", noteId = note.id, kind = ProposalKind.PLACE, newValue = "School",
+                evidenceQuote = "note", confidence = 0.9f, runId = "run-1",
+                state = ProposalState.PENDING, createdAt = clock, updatedAt = clock,
+            ),
+        )
+        handler.approveProposal("p1")
+
+        val derived = db.derivedDao().forNote(note.id).single { it.field == DerivedField.PLACE }
+        assertEquals("School", derived.value)
+        assertTrue(db.placeDao().observeAll().first().any { it.name == "School" })
+    }
+
+    @Test
+    fun `approving a proposal for a deleted note throws NoteMissing and leaves it pending`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "note"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1", noteId = note.id, kind = ProposalKind.TAG, newValue = "urgent",
+                evidenceQuote = "note", confidence = 0.9f, runId = "run-1",
+                state = ProposalState.PENDING, createdAt = clock, updatedAt = clock,
+            ),
+        )
+        handler.softDelete(note.id)
+
+        try {
+            handler.approveProposal("p1")
+            fail("expected NoteMissingException")
+        } catch (ignored: NoteMissingException) {
+            // expected
+        }
+        assertEquals(ProposalState.PENDING, db.proposalDao().byId("p1")!!.state)
+    }
+
+    @Test
+    @Ignore("A3, fixed in plan 12: approveProposal always inserts a new row, so two approvals of the same person name create two rows")
+    fun `approving two proposals for the same person creates one person row`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "Call Dylan"))
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p1", noteId = note.id, kind = ProposalKind.PERSON, newValue = "Dylan",
+                evidenceQuote = "Dylan", confidence = 0.9f, runId = "run-1",
+                state = ProposalState.PENDING, createdAt = clock, updatedAt = clock,
+            ),
+        )
+        db.proposalDao().insert(
+            ProposalEntity(
+                id = "p2", noteId = note.id, kind = ProposalKind.PERSON, newValue = "Dylan",
+                evidenceQuote = "Dylan", confidence = 0.9f, runId = "run-2",
+                state = ProposalState.PENDING, createdAt = clock, updatedAt = clock,
+            ),
+        )
+        handler.approveProposal("p1")
+        handler.approveProposal("p2")
+
+        assertEquals(1, db.personDao().observeAll().first().count { it.name == "Dylan" })
     }
 }
 
