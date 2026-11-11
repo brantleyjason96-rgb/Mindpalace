@@ -2,6 +2,24 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 01 step 1a: share hardening, soft-delete idempotency
+
+### Fixed
+- Share target no longer silently drops styled-text shares (`getCharSequenceExtra` instead of
+  `getStringExtra`), no longer crashes on a save failure (toasts instead), and now toasts when
+  there is genuinely nothing to save.
+- `ShareIngest` no longer mistakes "a URL followed by a newline and more text" for a link-only
+  share; a single URL elsewhere in the text is still recorded as `source_url`; shared raw text is
+  stored untrimmed.
+- `NoteCommandHandler.softDelete` is idempotent (deleting an already-deleted note is a no-op, not
+  a thrown `NoteConflictException`); a genuine concurrent-edit race still throws.
+
+### Added
+- `NoteSnapshot` carries `imagePath`/`attachmentPath`/`attachmentFileName` (audit trail now
+  records which file an ATTACHMENT/PHOTO note's entry refers to).
+
+### Test count: 98 (was 91). See `docs/TEST_RESULTS.md`.
+
 ## Unreleased — 2026-11-11 — Plan 02 §5 step 1: baseline untagged tests
 
 ### Added

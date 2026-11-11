@@ -1,5 +1,17 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 01 step 1a (share hardening, soft-delete idempotency, snapshot fields) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
+**Result:** `BUILD SUCCESSFUL` — **98 tests, 0 failures, 0 errors, 2 skipped** (same two `@Ignore`d
+bug records from the previous step: A3, G1). `assembleDebug` also green (debug APK built).
+
+Fixes in this step (see D28 in `docs/DECISIONS.md` for detail): `ShareReceiverActivity` reads
+styled text correctly and never silently drops a share; `ShareIngest`'s link detection now
+catches a URL followed by a newline (not just a space); shared raw text is stored untrimmed;
+`NoteCommandHandler.softDelete` is idempotent instead of throwing on an already-deleted note;
+`NoteSnapshot` now carries `imagePath`/`attachmentPath`/`attachmentFileName`.
+
 ## 2026-11-11 — Plan 02 §5 step 1 (baseline untagged tests) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest`

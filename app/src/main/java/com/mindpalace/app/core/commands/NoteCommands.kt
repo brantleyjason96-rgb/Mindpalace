@@ -45,18 +45,30 @@ class NoteMissingException(val noteId: String) : Exception("Note $noteId does no
  */
 object ShareIngest {
 
+    /** Matches a bare URL token for [toRequest]'s single-URL detection (plan 01 C3). */
+    private val URL_PATTERN = Regex("(?i)\\b(?:https?://|www\\.)\\S+")
+
     fun toRequest(text: String?, subject: String?, sourcePackage: String?): CreateNoteRequest? {
-        val trimmedText = text?.trim().orEmpty()
+        val original = text.orEmpty()
+        val trimmedText = original.trim()
         val cleanSubject = subject?.trim().orEmpty()
         if (trimmedText.isEmpty() && cleanSubject.isEmpty()) return null
 
-        val linkOnly = trimmedText.isNotEmpty() && !trimmedText.contains(' ') && looksLikeLink(trimmedText)
-        val sourceUrl = if (linkOnly) trimmedText else null
+        // "Link-only" requires the ENTIRE text to be one whitespace-free URL token — checking
+        // for a literal space only (the old bug) missed "url\nmore text", which then got stored
+        // whole as source_url instead of being recognized as a note WITH a link in it.
+        val linkOnly = trimmedText.isNotEmpty() && trimmedText.none { it.isWhitespace() } && looksLikeLink(trimmedText)
         val title = cleanSubject.ifEmpty { null }
 
+        // Not link-only, but exactly one URL appears in the text (e.g. a link on its own line
+        // followed by notes): still worth recording as source_url. Two or more is ambiguous —
+        // record neither rather than guess which one matters.
+        val sourceUrl = if (linkOnly) trimmedText else URL_PATTERN.findAll(trimmedText).map { it.value }.toList().singleOrNull()
+
         // Link-only share WITH a subject: subject becomes the title, the URL stays as raw text
-        // so it remains searchable. Otherwise raw text is exactly what was shared.
-        val rawText = if (trimmedText.isEmpty() && title != null) title else trimmedText.ifEmpty { title }
+        // so it remains searchable. Otherwise raw text is exactly what was shared, UNTRIMMED
+        // (rule 4) — trimming above is only for the emptiness and link checks.
+        val rawText = if (trimmedText.isEmpty() && title != null) title else original.ifEmpty { title }
 
         return CreateNoteRequest(
             source = NoteSource.SHARE,
