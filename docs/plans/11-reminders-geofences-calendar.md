@@ -68,7 +68,8 @@ so it shows in the Reminders screen under a "Due" heading. If notifications are 
 `activeTimeReminders()`. Call it from: `BootReceiver`; `MindPalaceApplication.onCreate`; and a
 new manifest receiver for
 `android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED` (no permission needed;
-register it in the manifest with `exported="false"`). `MY_PACKAGE_REPLACED` is covered by the
+register it in the manifest with `exported="false"`; confirm on the phone that it is delivered,
+and if it is not, rely on the `onCreate` call). `MY_PACKAGE_REPLACED` is covered by the
 `onCreate` call.
 
 **`ReminderCommands`** (new, `core/commands/ReminderCommands.kt`): `add(noteId, atMillis)`

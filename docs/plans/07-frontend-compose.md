@@ -196,13 +196,15 @@ the files of §2.
 
 ## 9. Tests
 
-`MainViewModelTest` → later split per ViewModel. Robolectric, in-memory database,
-`StandardTestDispatcher`, `Dispatchers.setMain`.
+`MainViewModelTest` → later split per ViewModel. Robolectric, in-memory database, the **real**
+`NoteCommandHandler` (no mocks; failures are produced by closing the database),
+`StandardTestDispatcher`, `Dispatchers.setMain`. At step 0, write only the tests that today's
+`MainViewModel` can pass (T-UI3, T-UI5); add each of the others with the step that makes it pass.
 
 | ID | Test name | Assert |
 |---|---|---|
-| T-UI1 | `capture saves and clears the draft only after the save` | fake slow command → text still present mid-save; empty after. |
-| T-UI2 | `a failed save keeps the text and reports an error` | handler throws → `state.body` unchanged; `UiErrors` emitted `Unknown`. |
+| T-UI1 | `capture saves and clears the draft only after the save` | call `capture()`; before `advanceUntilIdle()` the draft file still holds the text; after it, one note exists, `state.body == ""`, and the draft file is gone. |
+| T-UI2 | `a failed save keeps the text and reports an error` | close the database first → `state.body` unchanged, draft file still present, `UiErrors` emitted `Unknown`. |
 | T-UI3 | `search debounces and drops stale results` | set "a", "ab", "abc" within 100 ms → one query for "abc". |
 | T-UI4 | `search updates when a note is added elsewhere` | create through `commands` directly → results change without a ViewModel call. |
 | T-UI5 | `status filter limits the list` | INBOX filter → only inbox items. |

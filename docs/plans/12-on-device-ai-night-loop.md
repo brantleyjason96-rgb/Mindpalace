@@ -57,8 +57,9 @@ interface CompletionEngine {
 }
 ```
 `AiEngine` implements it (wrap its current functions; it keeps the `Context` it needs from a
-constructor or `init(context)`). `AiNightRunner(database, engine, now, newId)` takes the
-interface. Tests pass a `FakeEngine` that returns canned JSON. No test loads a real model.
+constructor or `init(context)`).
+`AiNightRunner(database, engine, now, newId, promptVersion = AiPrompt.PROMPT_VERSION)` takes the
+interface; `promptVersion` is a parameter so a test can simulate a prompt change. Tests pass a `FakeEngine` that returns canned JSON. No test loads a real model.
 
 ### 3.2 Jobs and leases
 One job per note revision, prompt, and model:
@@ -172,7 +173,7 @@ note in the **user** message only, never in the system prompt (already true).
 | T-AI10 | `load failure records FAILED_LOAD and enqueued jobs stay pending` | fake `load` returns false. |
 | T-AI11 | `overlapping runs: the second returns SKIPPED_BUSY` | start run 1 with a suspended fake engine; start run 2 → `SKIPPED_BUSY`. |
 | T-AI13 | `a rejected proposal is not proposed again` | reject; edit the note; run → no new proposal with that kind and value. |
-| T-AI14 | `repeat runs do not duplicate pending proposals` | force re-processing by bumping `PROMPT_VERSION` in the test → still one proposal. |
+| T-AI14 | `repeat runs do not duplicate pending proposals` | second run with a runner built with `promptVersion = "v2"` (forces re-processing) → still one proposal. |
 | T-AI15 | `a category outside the list is dropped` | fake returns category "Finance" not in `categories` → no proposal. |
 | T-AI16 | `ai_index holds one row per note` | process a note twice (edit between) → 1 row. |
 | T-AI17 | `an expired lease is reclaimed` | job `RUNNING` with `lease_until` in the past → processed. |
