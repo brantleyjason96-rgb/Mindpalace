@@ -1,10 +1,11 @@
-# Checkpoint 0 — device checklist (about 10 minutes)
+# Device checklist (about 10 minutes)
 
-Checkpoint 0 proves the app works on the real phone: it installs, saves, survives a force stop
-and a reboot, takes shared text, searches, and does all of it offline. It must pass before any
-Phase 1 UI work starts.
+Checkpoint 0 itself passed on the S26 Ultra on 2026-11-09 (see `README.md`). This is the same
+checklist as a script, to be re-run after every change that reaches the phone. It proves the app
+still installs over the existing copy, saves, survives a force stop and a reboot, takes shared
+text, searches, and requests only signed-off permissions.
 
-`scripts/checkpoint0.sh` runs the checklist, asks you to confirm what only a person can see, and
+`scripts/checkpoint0.sh` runs the steps, asks you to confirm what only a person can see, and
 appends a pass/fail table to `docs/TEST_RESULTS.md`.
 
 > **Status of the script:** written on 2026-11-11 without a phone attached. It has been
@@ -33,18 +34,17 @@ scripts/checkpoint0.sh
 ```
 
 Answer each question with `y` (yes), `n` (no), or `s` (skip). After an `n`, type one line saying
-what happened. Use `--skip-reboot` if you cannot reboot right now; the step is logged as SKIP and
-Checkpoint 0 is not complete until it passes.
+what happened. Use `--skip-reboot` if you cannot reboot right now; the step is logged as SKIP.
 
 ## What it checks
 
 | # | Step | Checked by | Pass means |
 |---|---|---|---|
 | 1 | Install | script | `adb install -r` reports Success. |
-| 2 | No network permission | script | The installed app holds neither `INTERNET` nor `ACCESS_NETWORK_STATE`. |
+| 2 | Permissions signed off | script | Every permission the installed app requests has its own entry in `docs/PERMISSIONS.md`. |
 | 3 | Airplane mode on | script (or you) | Airplane mode is on for the whole run. |
 | 4 | Launch | script | The app starts from cold; start time is logged. |
-| 5 | Typed note saves | you | "Saved (rev 1)" shows and the note is in the list. |
+| 5 | Typed note saves | you | The note appears in the Timeline. |
 | 6 | Survives force stop | script + you | The note is still there after a force stop. |
 | 7a | Share saves in under 2 s | script | A scripted share finishes in under 2000 ms. |
 | 7b | Shared note visible | you | The scripted share appears in the list. |
@@ -65,14 +65,16 @@ measurement of typing speed.
 | `APK not found` | The app has not been built. | Run `./gradlew assembleDebug`. |
 | `signature mismatch` | See below. | **Do not uninstall.** |
 | Step 3 asks you to set airplane mode by hand | The phone refused the command. | Turn it on in Quick Settings, answer `y`. |
+| Step 2 fails with "could not read the permission list" | The script could not parse this Android version's output. | Run `adb shell dumpsys package com.mindpalace.app` and report the "requested permissions" section. |
+| Step 2 names a permission | The app requests something with no sign-off entry. | Do not ignore it. See `docs/plans/REVIEW_GATES.md` Gate C. |
 | Step 10 fails with `run-as: package not debuggable` | A release build is installed. | Expected for release builds; record it and move on. |
 
 ### Signature mismatch — do not uninstall
 
 Each computer signs debug builds with its own key. If the phone already has Mind Palace from
 another computer (or from a CI download), Android refuses the update. The usual advice is
-"uninstall first". **Uninstalling deletes every note**, because backups are off by design
-(`DECISIONS.md` D4).
+"uninstall first". **Uninstalling deletes every note, photo, drawing, attachment, and the AI model file**, because
+backups are off by design (`DECISIONS.md` D4).
 
 Do this instead:
 
@@ -96,5 +98,9 @@ Do this instead:
    ```bash
    git commit -m "Checkpoint 0 device run"
    ```
-3. If every row is PASS, tick the boxes in `README.md` and add a line to `docs/CHANGELOG.md`.
-   Checkpoint 0 is then closed.
+3. If any row is FAIL, do not merge the change that was being checked.
+
+## Feature checks
+
+Each executed plan adds its own short device checks here, under a heading for that feature
+(see the "Device check" section of the plan). None have been added yet.

@@ -91,7 +91,8 @@ Copy this checklist into the plan that changes the schema (plans 08, 10, 11, 12,
 
 ## 4. Expected schema versions
 
-Assigned in execution order (`INDEX.md`). If the order changes, take the next free number.
+These are the numbers each plan uses in its own text. **Whichever plan runs first takes v4**;
+each later one takes the next free number and renames its migration to match (`INDEX.md` §2).
 
 | Version | Plan | Change |
 |---|---|---|

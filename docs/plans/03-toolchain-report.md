@@ -6,7 +6,8 @@
 Central metadata for Kotlin, KSP, kotlinx-serialization, Robolectric, and the Gradle version
 service. Google's Maven host could not be reached from the review environment, so AndroidX and
 AGP facts come from developer.android.com release notes, not from the artifacts themselves.
-**The project was not built here.** The first CI run (`06-ci.md`) is the real proof.
+**The project cannot be built in the planning environment.** CI is the proof: on 2026-11-11 the
+unit tests compiled and passed on Linux with these exact pins (`06-ci.md` §6).
 
 ## 1. Verdict per pin
 
@@ -33,8 +34,8 @@ AGP facts come from developer.android.com release notes, not from the artifacts 
 
 ### 2.1 kotlinx-serialization 1.12.0 with Kotlin 2.3.21 (medium risk)
 1.12.0 was built with Kotlin 2.4.10. The release built for Kotlin 2.3.x is **1.11.0**. The project
-uses the 2.3.21 serialization compiler plugin with the 1.12.0 runtime. The owner's local build
-passed 27/27, so it works today; the risk is a subtle mismatch later. This is an inference from
+uses the 2.3.21 serialization compiler plugin with the 1.12.0 runtime. The unit tests pass in CI
+with this pairing, so it works today; the risk is a subtle mismatch later. This is an inference from
 the release notes, not an observed failure.
 **Options (owner decision OD-1):** (a) pin serialization to 1.11.0; (b) move Kotlin to 2.4.21;
 (c) leave it and rely on tests. Recommended: (a), the smallest change.
@@ -57,10 +58,26 @@ confirmed without building. If CI fails this way, the fix is
 version AGP 9.5 bundles for built-in Kotlin was not confirmed (Google's sample pairs AGP 9.5.0
 with Kotlin 2.4.10).
 
-### 2.5 Not verified at all
-- That `androidx.sqlite:sqlite-bundled-jvm` carries **Linux** natives (the catalog comment says
-  macOS). CI on Ubuntu will show this on the first test.
-- That Gradle 9.9.x is an officially tested pairing for AGP 9.5.
+### 2.5 Settled by the first CI run
+- `androidx.sqlite:sqlite-bundled-jvm` does carry **Linux** natives: the Robolectric database
+  tests pass on Ubuntu. (The catalog comment still says "macOS"; fix the comment.)
+- Plain `compileSdk = 37` resolves on the runner's SDK: compilation succeeded. §2.3 needs no
+  action.
+- Gradle 9.9.0 with AGP 9.5.1 works in practice. No official "tested together" statement was
+  found.
+
+### 2.6 Pins added after D2 (commits of 2026-11-09 and 11-10)
+
+| Pin | Pinned | Checked? | Note |
+|---|---|---|---|
+| `com.google.mlkit:text-recognition` | 16.0.1 | Listed as current in search results (medium confidence) | Bundled model. Pulls in a usage-reporting component that declares `INTERNET` and `ACCESS_NETWORK_STATE`; see audit P1 / OD-4. |
+| `com.google.mlkit:digital-ink-recognition` | 19.0.0 | **Not verified** (Google's developer site was unreachable) | Model is download-only (D26). |
+| `androidx.work:work-runtime` | 2.12.0 | Latest stable | Its manifest declares `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE` (read from source). All approved. |
+| `androidx.room3:room3-testing` | 3.0.3 | Stable | `MigrationTestHelper` API matches what `MigrationTest` uses. |
+| NDK | 29.0.14206865 | **Not verified** | CI result in `06-ci.md` §6 shows whether the runner has or fetches it. |
+| CMake | 3.22.1 | Present on GitHub runners | |
+| llama.cpp (vendored source) | "v0.9.0" per D22 | **Not verified.** llama.cpp normally tags builds as `b<number>`; confirm the tag or record the commit hash so the source can be re-fetched. | 70 MB, 3,855 files in git. |
+| Gradle daemon JVM | 25, via `gradle/gradle-daemon-jvm.properties` | — | On a machine without JDK 25, Gradle downloads one from `api.foojay.io` at build time. That is a build-time network dependency; CI installs JDK 25 itself to avoid it. |
 
 ## 3. Versions for libraries the later plans add
 
@@ -72,14 +89,9 @@ its plan is executed (PLAN.md §16.8).
 | lifecycle-viewmodel-compose | 2.11.0 | 07 | none |
 | navigation-compose | 2.10.2 | 07 | none |
 | navigation3 | 1.2.1 (stable 4 Nov) | 07 (alternative) | none |
-| room3-testing | 3.0.3 | 14 | none (test only) |
 | camera (CameraX) | 1.6.2 | 09 (only if in-app camera) | none merged; app must declare `CAMERA` |
-| work-runtime | 2.12.0 | 11, 12 | **merges `WAKE_LOCK`, `ACCESS_NETWORK_STATE`, `RECEIVE_BOOT_COMPLETED`, `FOREGROUND_SERVICE`** |
-| glance-appwidget | 1.2.0 | 13 | **depends on work-runtime, so the same four** |
-
-`ACCESS_NETWORK_STATE` is on the `PrivacyManifestTest` deny list. Any plan that adds WorkManager
-or Glance needs an owner sign-off and a `tools:node="remove"` entry — see the sign-off table in
-`INDEX.md`.
+| glance-appwidget | 1.2.0 | 13 (not recommended there) | depends on work-runtime, whose four permissions are already approved in this app |
+| compose ui-test-junit4, ui-test-manifest | from the Compose BOM | 16 (test only, needs owner approval) | none |
 
 ## 4. Sources
 

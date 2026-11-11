@@ -23,7 +23,7 @@
 | 3.1 | Save first | Capture persists immediately in one transaction. Nothing waits on rules, indexing, or AI. | `NoteCommandHandler.create`, `ShareReceiverActivity` |
 | 3.2 | Originals are sacred | `raw_text`, `transcript`, `ocr_text` are stored verbatim. Only the user may change them, and only through the command handler. Deletes are soft. | `NoteEntities.kt`, `NoteCommandHandler` |
 | 3.4 | Validate before storing | AI output is structured JSON so a validator can check it before it is stored. | `AiEntities.kt` (`AiIndexEntity`) |
-| 3.6 | Private by construction | No `INTERNET` permission, enforced by a test. Export is manual and user-triggered. | `PrivacyManifestTest`, `NoteExporter` |
+| 3.6 | Private by construction | Originally: no `INTERNET` permission, enforced by a test. Since D26 (2026-11-10) the rule is "only owner-approved permissions": `INTERNET` exists for the handwriting model download only, and the test checks an approved list. Export is manual and user-triggered. | `PrivacyManifestTest`, `docs/PERMISSIONS.md`, D4, D26 |
 | 3.7 | Everything reversible | Every mutation writes an audit row with before/after snapshots and can be undone. Concurrent edits fail loudly (revision guard) instead of overwriting. | `NoteCommandHandler`, `Daos.kt` |
 | 4 | Tech choices | "Room + FTS5 for search". Realized as Room 3 + `BundledSQLiteDriver` (D3). | `NoteEntities.kt`, D3 |
 | 5 | Architecture | Module list (`core/model`, `core/db`, `core/commands`, `export`, …); "packages first, split to modules only if needed". The command handler is the only mutator of canonical data. | D1, `NoteCommandHandler` |
@@ -36,27 +36,27 @@
 | 13 | *unknown* | Never cited. | — |
 | 14 | Testing | Every schema version bump needs a `MigrationTest`. | D3, `MindPalaceDatabase.kt` |
 | 15 | Risks and mitigations | If FTS5 is unavailable or hostile input breaks it, fall back to a `LIKE` query. | D10, `Daos.kt` (`searchLike`) |
-| 16 | Process rules | 16: a test must fail if `INTERNET` appears. 16.6: keep a chronological decision log. 16.8: verify versions, do not assume. | `PrivacyManifestTest`, `DECISIONS.md` header, D2 |
+| 16 | Process rules | 16: a test must fail if an unapproved permission appears (originally: if `INTERNET` appears; see §3.6). 16.6: keep a chronological decision log. 16.8: verify versions, do not assume. | `PrivacyManifestTest`, `DECISIONS.md` header, D2 |
 
 ## Checkpoints cited in the repo
 
 | Checkpoint | What is known | Evidence |
 |---|---|---|
-| 0 | On-device: install, save, survive kill and reboot, share-in works, search works, airplane mode, capture-to-saved under 2 s. Must pass before Phase 1 UI work. | `README.md`, `TEST_RESULTS.md`, `docs/CHECKPOINT_0.md` |
+| 0 | On-device: install, save, survive kill and reboot, share-in works, search works, airplane mode, capture-to-saved under 2 s. **Passed 2026-11-09** (README). | `README.md`, `docs/CHECKPOINT_0.md` |
 | 1 | "Export round-trips." | `NoteExporterTest` |
 | 3 | "Every derived field shows its origin." | `SupportEntities.kt` (`DerivedEntity`) |
 | 2, 4, 5 | *unknown* | — |
 
 ## Phases cited in the repo
 
-| Phase | Content (as cited) |
-|---|---|
-| 0 | Project, schema, privacy gate, packaging. Done. |
-| 1 | Capture: typed, share, voice; FTS search; JSON/Markdown export; app UI. Backend done; UI, voice, widgets pending. |
-| 2 | Photo capture and OCR (`image_path`, `ocr_text`). |
-| 3 | Rules engine (versioned, dry-runnable), editable keyword lists per category. |
-| 4 | Surfacing: reminders, geofences, calendar. |
-| 5 | On-device AI and the night loop (`jobs`, `ai_runs`, `ai_index`, `proposals`). |
+| Phase | Content (as cited) | State on 2026-11-11 |
+|---|---|---|
+| 0 | Project, schema, privacy gate, packaging. | Done |
+| 1 | Capture: typed, share, voice; FTS search; export; app UI. | Built; hardening in plans 01, 07, 08, 15 |
+| 2 | Photo capture and OCR. | Built (plus handwriting and attachments); plan 09 |
+| 3 | Rules engine, editable categories. | First version built; plan 10 |
+| 4 | Surfacing: reminders, geofences, calendar. | Time reminders built; plan 11 |
+| 5 | On-device AI and the night loop. | First version built; plan 12 |
 
 ## Rule for new code comments
 
