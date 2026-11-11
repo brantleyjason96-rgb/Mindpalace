@@ -177,7 +177,8 @@ When CI is green:
 | Claim | Status |
 |---|---|
 | Unit tests pass on the current code | **Yes** — the "Unit tests" step passed in CI on Linux (run 43060205130) |
-| Debug APK builds in CI (includes the native llama.cpp build) | see `06-ci.md` §6 for the latest run result |
+| Debug APK builds in CI (includes the native llama.cpp build) | **Yes** — run 43061606673, every step green, about 14 minutes in total |
+| Permission gate and schema-unchanged check | **Yes** — both passed in the same run |
 | Audit findings | From reading the code. Two search findings were reproduced on real SQLite. Findings marked "likely" in `01` were not run on a device. |
 | Device script | Syntax-checked only; never run against a phone |
 | Library facts in `03`, `08`, `09`, `11`, `12`, `13` | From release notes and source manifests where stated; several are marked unverified |

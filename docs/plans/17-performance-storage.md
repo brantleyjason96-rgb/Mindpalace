@@ -3,8 +3,8 @@
 **State today:** nothing is measured. D3 recorded an APK of about 36 MB at v0.1. Since then the
 app gained ML Kit text recognition (bundled model), ML Kit digital ink, WorkManager, and
 llama.cpp native libraries for two ABIs with all CPU variants, packaged with
-`useLegacyPackaging`. **The current APK size is not recorded anywhere**; CI now uploads the APK,
-so the first green run gives the number (step 1 below).
+`useLegacyPackaging`. The first green CI run (2026-11-11) uploaded a debug APK artifact of about **55 MB zipped**;
+the exact APK byte count is not recorded yet (step 1 below).
 **Goal:** known numbers, written budgets, and cheap checks that catch a regression.
 **Sign-off needed:** none. **Schema change:** none (one optional index, §4.3, would be a bump).
 
