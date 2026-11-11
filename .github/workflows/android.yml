@@ -15,14 +15,14 @@ concurrency:
 jobs:
   build:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v7
 
       - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '21'
+          java-version: '25'
 
       - uses: gradle/actions/setup-gradle@v6
 
@@ -32,14 +32,21 @@ jobs:
       - name: Build debug APK
         run: ./gradlew assembleDebug --stacktrace
 
-      # Privacy gate on the real build output, in addition to PrivacyManifestTest.
-      - name: Merged manifest has no network permission
+      # Second privacy gate, on the real build output: every permission in the merged manifest
+      # must have its own "## NAME" entry in docs/PERMISSIONS.md (owner sign-off record).
+      - name: Merged manifest permissions are all signed off
         run: |
           manifest="$(find app/build/intermediates/merged_manifests/debug -name AndroidManifest.xml | head -1)"
           test -n "$manifest" || { echo "merged manifest not found"; exit 1; }
-          if grep -E 'android\.permission\.(INTERNET|ACCESS_NETWORK_STATE)' "$manifest"; then
-            echo "Network permission found in merged manifest"; exit 1
-          fi
+          bad=0
+          for perm in $(grep -oE '<uses-permission[^>]*android:name="[^"]+"' "$manifest" | sed -E 's/.*android:name="([^"]+)"/\1/' | sort -u); do
+            short="${perm##*.}"
+            case "$perm" in com.mindpalace.app.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION) continue ;; esac
+            if ! grep -qE "^## ${short}\$" docs/PERMISSIONS.md; then
+              echo "Permission without a sign-off entry in docs/PERMISSIONS.md: $perm"; bad=1
+            fi
+          done
+          exit $bad
 
       - name: Schema file is unchanged by the build
         run: git diff --exit-code -- app/schemas

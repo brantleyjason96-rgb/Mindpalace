@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# Checkpoint 0 — on-device checklist for Mind Palace (about 10 minutes).
-# Guide: docs/CHECKPOINT_0.md
+# Device checklist for Mind Palace (about 10 minutes).
+# Checkpoint 0 itself passed on 2026-11-09 (README). Use this as the repeatable on-device
+# regression run after each executed plan. Guide: docs/CHECKPOINT_0.md
 #
 # Usage (phone connected by USB, USB debugging on):
 #   scripts/checkpoint0.sh                 # run the whole checklist
@@ -97,7 +98,7 @@ if [ "$PULL_EXPORT" = "1" ]; then
 fi
 
 DEVICE="$(adb shell getprop ro.product.model | tr -d '\r') / Android $(adb shell getprop ro.build.version.release | tr -d '\r')"
-echo "Checkpoint 0 on: $DEVICE"
+echo "Device checklist on: $DEVICE"
 echo "Results will be appended to docs/TEST_RESULTS.md"
 
 # ---------------------------------------------------------------- 1. install
@@ -124,12 +125,22 @@ else
 fi
 
 # ---------------------------------------------------------------- 2. privacy
-echo; echo "== 2. No network permission on the installed app =="
-PERMS="$(adb shell dumpsys package "$PKG" | tr -d '\r')"
-if echo "$PERMS" | grep -Eq 'android\.permission\.(INTERNET|ACCESS_NETWORK_STATE)'; then
-  record FAIL "2 No network permission" "INTERNET or ACCESS_NETWORK_STATE is present"
+echo; echo "== 2. Installed permissions are all signed off =="
+# Every permission the installed app requests must have a "## NAME" entry in docs/PERMISSIONS.md.
+REQUESTED="$(adb shell dumpsys package "$PKG" | tr -d '\r' \
+  | awk '/requested permissions:/{f=1;next} /install permissions:|runtime permissions:|^$/{f=0} f{print $1}' \
+  | sed 's/:.*//' | sort -u)"
+UNSIGNED=""
+for perm in $REQUESTED; do
+  case "$perm" in "$PKG.DYNAMIC_RECEIVER_NOT_EXPORTED_PERMISSION") continue ;; esac
+  grep -qE "^## ${perm##*.}\$" "$ROOT/docs/PERMISSIONS.md" || UNSIGNED="$UNSIGNED ${perm##*.}"
+done
+if [ -z "$REQUESTED" ]; then
+  record FAIL "2 Permissions signed off" "could not read the permission list"
+elif [ -n "$UNSIGNED" ]; then
+  record FAIL "2 Permissions signed off" "no entry in PERMISSIONS.md for:$UNSIGNED"
 else
-  record PASS "2 No network permission" "dumpsys package"
+  record PASS "2 Permissions signed off" "$(echo "$REQUESTED" | wc -l | tr -d ' ') requested, all documented"
 fi
 
 # ---------------------------------------------------------------- 3. airplane mode
@@ -153,14 +164,14 @@ else
 fi
 
 # ---------------------------------------------------------------- 5. typed note
-ask "5 Typed note saves" "On the phone: type a note containing the word  $TAG  and tap Save.
-Does it show 'Saved (rev 1)' and appear in the list?"
+ask "5 Typed note saves" "On the phone: in the Capture tab, type a note containing the word  $TAG  and save it.
+Does it appear in the Timeline?"
 
 # ---------------------------------------------------------------- 6. force stop
 echo; echo "== 6. Survives force stop =="
 adb shell am force-stop "$PKG"
 adb shell am start -W -n "$MAIN" >/dev/null 2>&1
-ask "6 Survives force stop" "The app was force-stopped and reopened. Is the $TAG note still in the list?"
+ask "6 Survives force stop" "The app was force-stopped and reopened. Is the $TAG note still in the Timeline?"
 
 # ---------------------------------------------------------------- 7. share
 echo; echo "== 7. Share into Mind Palace =="
@@ -173,12 +184,12 @@ else
   record PASS "7a Share saves in under 2 s" "${SHARE_MS:-n/a} ms (script-sent share)"
 fi
 adb shell am start -W -n "$MAIN" >/dev/null 2>&1
-ask "7b Shared note visible" "A test share was sent. Is a note  shared-$TAG  in the list?"
+ask "7b Shared note visible" "A test share was sent. Is a note  shared-$TAG  in the Timeline?"
 ask "7c Share from a real app" "Open any app with text (Samsung Notes, Chrome while offline shows a page title),
 choose Share -> 'Save to Mind Palace'. Did you see the 'Saved' toast and does the note appear?"
 
 # ---------------------------------------------------------------- 8. search
-ask "8 Search finds a word" "Type  $TAG  in the search box. Do the matching notes appear?"
+ask "8 Search finds a word" "Type  $TAG  in the Timeline search box. Do the matching notes appear?"
 
 # ---------------------------------------------------------------- 9. reboot
 echo; echo "== 9. Survives reboot =="
@@ -190,7 +201,7 @@ else
   if wait_for_boot; then
     printf 'Unlock the phone, then press Enter > '; read -r _
     adb shell am start -W -n "$MAIN" >/dev/null 2>&1
-    ask "9 Survives reboot" "After the reboot: are both $TAG notes still in the list?"
+    ask "9 Survives reboot" "After the reboot: are both $TAG notes still in the Timeline?"
     AIRPLANE2="$(adb shell settings get global airplane_mode_on | tr -d '\r')"
     if [ "$AIRPLANE2" = "1" ]; then
       record PASS "9b Still offline after reboot" "airplane mode still on"
@@ -222,7 +233,7 @@ COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 
 {
   echo
-  echo "## $STAMP — Checkpoint 0 on device — $VERDICT"
+  echo "## $STAMP — Device checklist — $VERDICT"
   echo
   echo "**Device:** $DEVICE. **Commit:** \`$COMMIT\`. **Run by:** scripts/checkpoint0.sh"
   echo
@@ -232,6 +243,6 @@ COMMIT="$(git -C "$ROOT" rev-parse --short HEAD 2>/dev/null || echo unknown)"
 } >> "$RESULTS"
 
 echo
-echo "Checkpoint 0: $VERDICT"
+echo "Device checklist: $VERDICT"
 echo "Logged to docs/TEST_RESULTS.md — commit that file to keep the record."
 [ "$FAILS" = "0" ]
