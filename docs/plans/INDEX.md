@@ -63,9 +63,9 @@ review gate. "After" lists hard dependencies.
 | 6 | 01 step 1e — bring `CLAUDE.md`, README, TEST_RESULTS, CHANGELOG up to date | 5 | So the faster model's own brief is true. |
 | 7 | 14 — migration tests and template | 1 | Must exist before the first new schema version. |
 | 8 | 07 steps 0–4 — split files, navigator, errors, undo controller | 5, 3 | Later plans edit small files instead of one huge one. |
-| 9 | 11 Part A — reliable time reminders (**v6** in the plan; see note) | 7, 8 | P0: reminders may never fire today. |
-| 10 | 10 — rules v2 (**v4**) | 7, 8 | |
-| 11 | 12 — night loop hardening (**v5**) | 7, 8; 10 for derived audit | |
+| 9 | 11 Part A — reliable time reminders (**v6** in the plan; actually **v4** — see note) | 7, 8 | P0: reminders may never fire today. Backend half done 2026-11-11 ahead of order 8 (plan 07 split), at the owner's request — touched only `MainViewModel`'s reminder functions, not the still-unsplit `ReminderSection`/`RemindersScreen` composables, so this didn't need the split first. UI half still pending. |
+| 10 | 10 — rules v2 (**v4** in the plan; next free is now **v5**) | 7, 8 | |
+| 11 | 12 — night loop hardening (**v5** in the plan; next free is now **v6**) | 7, 8; 10 for derived audit | |
 | 12 | 08 — voice (option A unless OD-5 says B) | 8 | |
 | 13 | 09 — camera, OCR, handwriting, attachments | 8, 12 (`DraftStore`) | |
 | 14 | 07 steps 5–10 — per-screen ViewModels, previews, `ArchitectureTest` | 8–13 | Independent per screen; can interleave with 9–13. |
@@ -76,9 +76,10 @@ review gate. "After" lists hard dependencies.
 | 19 | 11 Part B, then C | sign-off | Only after the owner signs off the permissions. |
 
 **Schema numbers:** the plans name v4 (rules), v5 (AI), v6 (reminders), v7 (voice, optional).
-Order 9 runs reminders before rules because it is the more urgent fix. **Whoever goes first
-takes v4**; each later one takes the next free number and renames its migration
-(`MIGRATION_3_4`, `MIGRATION_4_5`, …) accordingly. The plan 14 template handles this.
+Order 9 runs reminders before rules because it is the more urgent fix — and reminders (plan 11
+Part A) ran first in practice too, so it took **v4** (`MIGRATION_3_4`), not v6. **Whoever goes
+next takes v5**; each later one takes the next free number and renames its migration
+accordingly. The plan 14 template handles this.
 
 **Compared with the order suggested in the brief** (1 → 2 → 4 → 5 → 6 → 14 → 7 → 15 → 10 → 8 → 9
 → 11 → 12 → 13 → 16 → 17): the audit fixes and reminders move up because they are data-loss or

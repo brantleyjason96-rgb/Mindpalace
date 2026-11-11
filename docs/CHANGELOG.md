@@ -2,6 +2,32 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 11 Part A (backend half): reliable time reminders
+
+### Added
+- `ReminderPlanner` — pure function deciding Exact/Inexact/FireNow/Nothing for a reminder.
+- `ReminderCommands` — add/cancel/complete/snooze/fire/rescheduleAll in one place; `fire` is
+  idempotent and shared between the exact-alarm receiver and the reschedule-on-boot/app-start/
+  permission-change paths.
+- A new receiver that re-plans every reminder when exact-alarm permission changes in system
+  settings; `rescheduleAll` now also runs on `Application.onCreate` (catches app updates and
+  anything missed while the app wasn't running).
+- A proper monochrome notification icon — the launcher mipmap was rendering as a blank square.
+
+### Fixed
+- A denied exact-alarm permission used to leave a reminder silently never scheduled; a past time
+  was silently accepted and never fired; reminders never caught up after boot/update/permission
+  changes beyond the one case `BootReceiver` already handled.
+
+### Changed
+- Schema v3 → v4: `reminders` gains `fire_at`/`fired_at` (backfilled from `spec` for existing TIME
+  rows). versionCode/versionName → 6/0.6.0.
+
+Backend only — the UI half (date-picker permission re-checks, past-time rejection, localized time
+display, a Due/Snooze section) is a separate unit, not yet done.
+
+### Test count: 138 (was 122). See `docs/TEST_RESULTS.md`.
+
 ## Unreleased — 2026-11-11 — Plan 14: migration test framework
 
 ### Added

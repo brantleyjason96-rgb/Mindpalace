@@ -72,6 +72,36 @@ class MigrationTest {
         connection.close()
     }
 
+    @Test
+    fun `migrate 3 to 4 backfills fire_at from spec`() = runTest {
+        val db = helper.createDatabase(3)
+        db.execSQL(
+            "INSERT INTO notes (id, created_at, updated_at, source, status, revision) " +
+                "VALUES ('n1', 1000, 1000, 'TEXT', 'INBOX', 1)",
+        )
+        db.execSQL(
+            "INSERT INTO reminders (id, note_id, type, spec, state, created_at) " +
+                "VALUES ('r1', 'n1', 'TIME', '2026-12-01T13:00:00Z', 'ACTIVE', 1000)",
+        )
+        db.execSQL(
+            "INSERT INTO reminders (id, note_id, type, spec, state, created_at) " +
+                "VALUES ('r2', 'n1', 'TIME', 'junk', 'ACTIVE', 1000)",
+        )
+        db.close()
+
+        val connection = helper.runMigrationsAndValidate(4, listOf(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4))
+        val statement = connection.prepare("SELECT fire_at FROM reminders WHERE id = 'r1'")
+        assertEquals(true, statement.step())
+        assertEquals(1796130000000L, statement.getLong(0))
+        statement.close()
+
+        val junkStatement = connection.prepare("SELECT fire_at FROM reminders WHERE id = 'r2'")
+        assertEquals(true, junkStatement.step())
+        assertEquals(true, junkStatement.isNull(0))
+        junkStatement.close()
+        connection.close()
+    }
+
     // ----------------------------------------------------------- plan 14: full-chain template
 
     @Test
@@ -170,11 +200,11 @@ class MigrationTest {
     }
 
     private companion object {
-        /** Read from the `@Database` annotation when retained at runtime; 3 is the fallback if
+        /** Read from the `@Database` annotation when retained at runtime; 4 is the fallback if
          *  not (T-MIG6 keeps this in sync with reality either way, by asserting a schema file
          *  exists for every version up to this one). */
         val LATEST: Int = runCatching {
             MindPalaceDatabase::class.java.getAnnotation(Database::class.java)!!.version
-        }.getOrElse { 3 }
+        }.getOrElse { 4 }
     }
 }

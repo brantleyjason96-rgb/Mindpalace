@@ -79,6 +79,16 @@
             </intent-filter>
         </receiver>
 
+        <!-- Re-plans every active reminder when the user grants/revokes exact-alarm scheduling
+             in system settings (plan 11 Part A R1#6). No permission needed for this broadcast. -->
+        <receiver
+            android:name=".core.reminders.ExactAlarmPermissionChangedReceiver"
+            android:exported="false">
+            <intent-filter>
+                <action android:name="android.app.action.SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED" />
+            </intent-filter>
+        </receiver>
+
         <!-- Lets the share sheet read an export file from our private dir; no permission
              granted beyond that one file, and only while a share is in progress. -->
         <provider

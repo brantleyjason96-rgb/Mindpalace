@@ -4,10 +4,11 @@ package com.mindpalace.app
 // Main screen (polished capture + browse). Backend contract used:
 //   container.commands (ONLY writer of canonical note data), container.database.noteDao()
 //   (Flow reads + FTS search). Delete = soft delete, Undo = restore (audited, §3.2).
-// NOT fully true yet (plan 01 W1, tracked, not fixed): several vocabulary/rules/reminder writes
-// in MainViewModel go straight through DAOs (addTopic/addPerson/addPlace/addLink/addReminder/
-// cancelReminder/completeReminder/setRuleEnabled/addRule/deleteRule) — none of those are audited
-// or undoable. Canonical NOTE fields (text/title/status/delete) do go through NoteCommandHandler.
+// NOT fully true yet (plan 01 W1, tracked, not fixed): several vocabulary/rules writes in
+// MainViewModel go straight through DAOs (addTopic/addPerson/addPlace/addLink/setRuleEnabled/
+// addRule/deleteRule) — none of those are audited or undoable. Reminders go through
+// ReminderCommands (plan 11 Part A) — not audited either (D19), but no longer a direct DAO call
+// from the ViewModel. Canonical NOTE fields (text/title/status/delete) go through NoteCommandHandler.
 // ============================================================================
 
 import android.Manifest
@@ -171,6 +172,7 @@ import com.mindpalace.app.core.commands.EmptyCaptureException
 import com.mindpalace.app.core.commands.NoteCommandHandler
 import com.mindpalace.app.core.commands.NoteConflictException
 import com.mindpalace.app.core.commands.NoteMissingException
+import com.mindpalace.app.core.commands.ReminderCommands
 import com.mindpalace.app.core.db.CategoryDao
 import com.mindpalace.app.core.db.CategoryEntity
 import com.mindpalace.app.core.db.FtsQuery
@@ -281,6 +283,7 @@ sealed interface NoteLookup {
 class MainViewModel(
     database: MindPalaceDatabase,
     private val commands: NoteCommandHandler,
+    private val reminderCommands: ReminderCommands,
     private val exporter: NoteExporter,
     private val exportDir: File,
     val photosDir: File,
@@ -456,34 +459,18 @@ class MainViewModel(
 
     fun remindersForNote(noteId: String): Flow<List<ReminderEntity>> = reminderDao.observeForNote(noteId)
 
-    /** Creates the reminder row and schedules the exact alarm in the same call (D19). */
+    /** Creates the reminder row and applies the scheduling decision in the same call (D19; plan
+     *  11 Part A — the decision itself now lives in [ReminderPlanner] via [ReminderCommands]). */
     fun addReminder(context: Context, noteId: String, atMillis: Long) {
-        launchCommand {
-            val reminder = ReminderEntity(
-                id = UUID.randomUUID().toString(),
-                noteId = noteId,
-                type = ReminderType.TIME,
-                spec = millisToSpec(atMillis),
-                state = ReminderState.ACTIVE,
-                createdAt = System.currentTimeMillis(),
-            )
-            reminderDao.insert(reminder)
-            AlarmScheduler.schedule(context, reminder)
-        }
+        launchCommand { reminderCommands.add(context, noteId, atMillis) }
     }
 
     fun cancelReminder(context: Context, reminder: ReminderEntity) {
-        launchCommand {
-            reminderDao.setState(reminder.id, ReminderState.CANCELLED, null)
-            AlarmScheduler.cancel(context, reminder)
-        }
+        launchCommand { reminderCommands.cancel(context, reminder) }
     }
 
     fun completeReminder(context: Context, reminder: ReminderEntity) {
-        launchCommand {
-            reminderDao.setState(reminder.id, ReminderState.DONE, null)
-            AlarmScheduler.cancel(context, reminder)
-        }
+        launchCommand { reminderCommands.complete(context, reminder) }
     }
 
     fun setRuleEnabled(id: String, enabled: Boolean) {
@@ -671,6 +658,7 @@ class MainViewModel(
                     MainViewModel(
                         container.database,
                         container.commands,
+                        container.reminderCommands,
                         container.exporter,
                         container.exportDir,
                         container.photosDir,
