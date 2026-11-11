@@ -9,3 +9,6 @@ build/
 .cxx/
 *.apk
 *.aab
+
+# Files pulled from the phone by scripts/checkpoint0.sh --pull-export (contain notes)
+/exports-pulled/
