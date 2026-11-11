@@ -355,6 +355,168 @@ class NoteCommandHandlerTest {
     }
 
     @Test
+    fun `undo of restore deletes again`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "temp"))
+        clock = 11_000
+        handler.softDelete(note.id)
+        clock = 12_000
+        handler.restore(note.id)
+        val restoreAudit = db.auditDao().recentFor("note", note.id, 1).single()
+
+        clock = 13_000
+        handler.undo(restoreAudit.id)
+
+        assertNotNull(db.noteDao().byId(note.id)?.deletedAt)
+        assertEquals(AuditAction.UNDO, db.auditDao().recentFor("note", note.id, 1).single().action)
+    }
+
+    @Test
+    fun `undo of undo is redo`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        clock = 11_000
+        handler.updateRawText(note.id, "b")
+        clock = 12_000
+        handler.undo(db.auditDao().recentFor("note", note.id, 1).single().id)
+        assertEquals("a", db.noteDao().byId(note.id)?.rawText)
+
+        clock = 13_000
+        handler.undo(db.auditDao().recentFor("note", note.id, 1).single().id)
+        assertEquals("b", db.noteDao().byId(note.id)?.rawText)
+    }
+
+    @Test
+    fun `undo is refused when the note changed since`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        clock = 11_000
+        handler.updateRawText(note.id, "b")
+        val staleAudit = db.auditDao().recentFor("note", note.id, 1).single()
+        clock = 12_000
+        handler.updateRawText(note.id, "c")
+        val auditCountBefore = db.auditDao().count()
+
+        try {
+            handler.undo(staleAudit.id)
+            fail("expected UndoStaleException")
+        } catch (ignored: UndoStaleException) {
+            // expected
+        }
+        assertEquals("c", db.noteDao().byId(note.id)?.rawText)
+        assertEquals(auditCountBefore, db.auditDao().count())
+    }
+
+    @Test
+    fun `second undo of the same entry is refused`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        clock = 11_000
+        handler.updateRawText(note.id, "b")
+        val editAudit = db.auditDao().recentFor("note", note.id, 1).single()
+        clock = 12_000
+        handler.undo(editAudit.id)
+
+        try {
+            handler.undo(editAudit.id)
+            fail("expected UndoStaleException")
+        } catch (ignored: UndoStaleException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `undo restores null raw text as null`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, title = "T"))
+        clock = 11_000
+        handler.updateRawText(note.id, "x")
+        val editAudit = db.auditDao().recentFor("note", note.id, 1).single()
+
+        clock = 12_000
+        handler.undo(editAudit.id)
+        assertNull(db.noteDao().byId(note.id)?.rawText)
+    }
+
+    @Test
+    fun `every undo is audited as UNDO`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "task"))
+        val createAudit = db.auditDao().recentFor("note", note.id, 1).single()
+        clock = 11_000
+        handler.undo(createAudit.id) // CREATE undo
+        assertEquals(AuditAction.UNDO, db.auditDao().recentFor("note", note.id, 1).single().action)
+
+        clock = 12_000
+        handler.restore(note.id)
+        clock = 13_000
+        handler.setStatus(note.id, NoteStatus.DONE)
+        val statusAudit = db.auditDao().recentFor("note", note.id, 1).single()
+        clock = 14_000
+        handler.undo(statusAudit.id) // SET_STATUS undo
+        assertEquals(AuditAction.UNDO, db.auditDao().recentFor("note", note.id, 1).single().action)
+
+        clock = 15_000
+        handler.softDelete(note.id)
+        val deleteAudit = db.auditDao().recentFor("note", note.id, 1).single()
+        clock = 16_000
+        handler.undo(deleteAudit.id) // SOFT_DELETE undo
+        assertEquals(AuditAction.UNDO, db.auditDao().recentFor("note", note.id, 1).single().action)
+    }
+
+    @Test
+    fun `stale expected revision is rejected`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        clock = 11_000
+        handler.updateRawText(note.id, "b") // revision is now 2
+
+        try {
+            handler.updateRawText(note.id, "c", expectedRevision = 1)
+            fail("expected NoteConflictException")
+        } catch (ignored: NoteConflictException) {
+            // expected
+        }
+        assertEquals("b", db.noteDao().byId(note.id)?.rawText)
+
+        try {
+            handler.setStatus(note.id, NoteStatus.DONE, expectedRevision = 1)
+            fail("expected NoteConflictException")
+        } catch (ignored: NoteConflictException) {
+            // expected
+        }
+        try {
+            handler.softDelete(note.id, expectedRevision = 1)
+            fail("expected NoteConflictException")
+        } catch (ignored: NoteConflictException) {
+            // expected
+        }
+        try {
+            handler.updateTitle(note.id, "T", expectedRevision = 1)
+            fail("expected NoteConflictException")
+        } catch (ignored: NoteConflictException) {
+            // expected
+        }
+    }
+
+    @Test
+    fun `matching expected revision is applied`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        handler.updateRawText(note.id, "b", expectedRevision = 1)
+        assertEquals(2, db.noteDao().byId(note.id)?.revision)
+    }
+
+    @Test
+    fun `updateTitle is audited and undoable`() = runTest {
+        val note = handler.create(CreateNoteRequest(source = NoteSource.TEXT, rawText = "a"))
+        clock = 11_000
+        handler.updateTitle(note.id, "T")
+
+        val after = db.noteDao().byId(note.id)!!
+        assertEquals("T", after.title)
+        assertEquals(2, after.revision)
+        val titleAudit = db.auditDao().recentFor("note", note.id, 1).single()
+        assertEquals(AuditAction.UPDATE_TITLE, titleAudit.action)
+
+        clock = 12_000
+        handler.undo(titleAudit.id)
+        assertNull(db.noteDao().byId(note.id)?.title)
+    }
+
+    @Test
     fun `snapshot carries image and attachment paths`() = runTest {
         handler.create(
             CreateNoteRequest(

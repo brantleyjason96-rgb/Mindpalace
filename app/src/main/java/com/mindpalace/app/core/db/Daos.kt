@@ -87,6 +87,33 @@ interface NoteDao {
     )
     suspend fun restoreGuarded(id: String, now: Long, revision: Int): Int
 
+    @Query(
+        "UPDATE notes SET title = :title, updated_at = :now, revision = revision + 1 " +
+            "WHERE id = :id AND revision = :revision AND deleted_at IS NULL",
+    )
+    suspend fun updateTitleGuarded(id: String, title: String?, now: Long, revision: Int): Int
+
+    /**
+     * Restores every undoable field from an audit snapshot in one guarded write (plan 01 U1) —
+     * deliberately has NO `deleted_at IS NULL` condition, since undoing a SOFT_DELETE/RESTORE must
+     * be able to write onto a row in either delete state. The revision guard is what makes this
+     * safe: it only applies if nothing has changed since the audited action.
+     */
+    @Query(
+        "UPDATE notes SET title = :title, raw_text = :rawText, status = :status, " +
+            "deleted_at = :deletedAt, updated_at = :now, revision = revision + 1 " +
+            "WHERE id = :id AND revision = :revision",
+    )
+    suspend fun restoreSnapshotGuarded(
+        id: String,
+        title: String?,
+        rawText: String?,
+        status: NoteStatus,
+        deletedAt: Long?,
+        now: Long,
+        revision: Int,
+    ): Int
+
     /**
      * FTS5 search over title/raw text/transcript/OCR. External-content table ⇒ join on
      * notes.rowid == notes_fts.rowid (docid). Pass queries through [FtsQuery.sanitize].

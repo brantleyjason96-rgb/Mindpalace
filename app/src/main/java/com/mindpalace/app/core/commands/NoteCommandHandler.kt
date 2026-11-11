@@ -121,13 +121,47 @@ class NoteCommandHandler(
 
     // ------------------------------------------------------ single-field edits
 
-    /** User (or an approved proposal) replaces raw text; the old text stays in the audit trail. */
-    suspend fun updateRawText(noteId: String, newText: String, actor: AuditActor = AuditActor.USER) {
-        doRawText(noteId, newText, AuditAction.UPDATE_RAW_TEXT, actor)
+    /**
+     * User (or an approved proposal) replaces raw text; the old text stays in the audit trail.
+     * [expectedRevision] (plan 01 H1), when given, must match the note's current revision or this
+     * throws [NoteConflictException] instead of silently overwriting a change the caller never
+     * saw — the editor passes the revision it loaded.
+     */
+    suspend fun updateRawText(noteId: String, newText: String, actor: AuditActor = AuditActor.USER, expectedRevision: Int? = null) {
+        doRawText(noteId, newText, AuditAction.UPDATE_RAW_TEXT, actor, expectedRevision)
     }
 
-    suspend fun setStatus(noteId: String, newStatus: NoteStatus, actor: AuditActor = AuditActor.USER) {
-        doStatus(noteId, newStatus, AuditAction.SET_STATUS, actor)
+    suspend fun setStatus(noteId: String, newStatus: NoteStatus, actor: AuditActor = AuditActor.USER, expectedRevision: Int? = null) {
+        doStatus(noteId, newStatus, AuditAction.SET_STATUS, actor, expectedRevision)
+    }
+
+    /** There was no title edit before (plan 01 H2) — the ViewModel's own comment said so. */
+    suspend fun updateTitle(noteId: String, newTitle: String?, actor: AuditActor = AuditActor.USER, expectedRevision: Int? = null) {
+        val current = requireExisting(noteId)
+        if (expectedRevision != null && current.revision != expectedRevision) throw NoteConflictException(noteId)
+        if (current.title == newTitle) return
+        val at = now()
+        val applied = database.withWriteTransaction {
+            val rows = database.noteDao().updateTitleGuarded(noteId, newTitle, at, current.revision)
+            if (rows == 1) {
+                database.auditDao().append(
+                    entry(
+                        noteId,
+                        AuditAction.UPDATE_TITLE,
+                        actor,
+                        before = current.snapshot(),
+                        after = current.copy(
+                            title = newTitle,
+                            updatedAt = at,
+                            revision = current.revision + 1,
+                        ).snapshot(),
+                        at = at,
+                    ),
+                )
+            }
+            rows
+        }
+        if (applied != 1) throw NoteConflictException(noteId)
     }
 
     /**
@@ -135,8 +169,9 @@ class NoteCommandHandler(
      * Idempotent: deleting an already-deleted note is a no-op, not an error (plan 01 H2) — a
      * lost race against a concurrent change is the only case that throws.
      */
-    suspend fun softDelete(noteId: String, actor: AuditActor = AuditActor.USER) {
+    suspend fun softDelete(noteId: String, actor: AuditActor = AuditActor.USER, expectedRevision: Int? = null) {
         val current = requireExisting(noteId, includeDeleted = true)
+        if (expectedRevision != null && current.revision != expectedRevision) throw NoteConflictException(noteId)
         if (current.deletedAt != null) return
         val at = now()
         val applied = database.withWriteTransaction {
@@ -163,8 +198,9 @@ class NoteCommandHandler(
     }
 
     /** Un-deletes a soft-deleted note. */
-    suspend fun restore(noteId: String, actor: AuditActor = AuditActor.USER) {
+    suspend fun restore(noteId: String, actor: AuditActor = AuditActor.USER, expectedRevision: Int? = null) {
         val current = requireExisting(noteId, includeDeleted = true)
+        if (expectedRevision != null && current.revision != expectedRevision) throw NoteConflictException(noteId)
         if (current.deletedAt == null) return
         val at = now()
         val applied = database.withWriteTransaction {
@@ -195,8 +231,10 @@ class NoteCommandHandler(
         newText: String,
         auditAction: AuditAction,
         actor: AuditActor,
+        expectedRevision: Int? = null,
     ) {
         val current = requireExisting(noteId)
+        if (expectedRevision != null && current.revision != expectedRevision) throw NoteConflictException(noteId)
         if (current.rawText == newText) return
         val at = now()
         val applied = database.withWriteTransaction {
@@ -227,8 +265,10 @@ class NoteCommandHandler(
         newStatus: NoteStatus,
         auditAction: AuditAction,
         actor: AuditActor,
+        expectedRevision: Int? = null,
     ) {
         val current = requireExisting(noteId)
+        if (expectedRevision != null && current.revision != expectedRevision) throw NoteConflictException(noteId)
         if (current.status == newStatus) return
         val at = now()
         val applied = database.withWriteTransaction {
@@ -318,35 +358,86 @@ class NoteCommandHandler(
     // -------------------------------------------------------------------- undo
 
     /**
-     * Reverses the mutation recorded in audit row [auditId] (§3.7 "everything reversible"):
-     *  - CREATE                       → soft-deletes the note ([restore] brings it back)
-     *  - SOFT_DELETE                  → restores the note
-     *  - UPDATE_RAW_TEXT / SET_STATUS → re-applies the recorded `before` snapshot
-     *  - RESTORE / UNDO               → not directly undoable in v1
-     * Every undo is itself audited (action=UNDO), so undo is undoable.
+     * Reverses the mutation recorded in audit row [auditId] (§3.7 "everything reversible"; plan
+     * 01 U1 redesign). Restores the recorded `before` snapshot (title, raw text, status,
+     * deleted_at) in one guarded write, but ONLY if the note's revision still matches that audit
+     * entry's `after` revision — i.e. nothing has changed since. Anything else in between (a
+     * second edit, another undo) makes the old `before` snapshot stale and this throws
+     * [UndoStaleException] rather than clobbering whatever happened since.
+     *
+     * `before == null` only ever happens for a CREATE entry (there's no prior state) — that case
+     * soft-deletes instead, keeping the note's current content, and [restore] still brings it
+     * back. Every other action restores its exact `before` snapshot, including CREATE's own
+     * `revision`/raw-text-may-be-null fields, so undo-of-undo is redo and every action is
+     * undoable (RESTORE and a prior UNDO included — the before/after special-casing that used to
+     * block them is gone).
+     *
+     * Every undo is itself audited as UNDO, so it can be undone in turn.
      */
     suspend fun undo(auditId: Long) {
         val original = database.auditDao().byId(auditId)
             ?: throw IllegalArgumentException("No audit entry $auditId")
         check(original.entity == AUDIT_ENTITY_NOTE) { "v1 can only undo note mutations" }
 
-        when (original.action) {
-            AuditAction.CREATE -> softDelete(original.entityId)
-            AuditAction.SOFT_DELETE -> restore(original.entityId)
-            AuditAction.UPDATE_RAW_TEXT -> {
-                val before = original.before
-                    ?.let { json.decodeFromString(NoteSnapshot.serializer(), it) }
-                    ?: throw IllegalStateException("Audit entry $auditId has no before snapshot")
-                doRawText(original.entityId, before.rawText ?: "", AuditAction.UNDO, AuditActor.USER)
-            }
-            AuditAction.SET_STATUS -> {
-                val before = original.before
-                    ?.let { json.decodeFromString(NoteSnapshot.serializer(), it) }
-                    ?: throw IllegalStateException("Audit entry $auditId has no before snapshot")
-                doStatus(original.entityId, NoteStatus.valueOf(before.status), AuditAction.UNDO, AuditActor.USER)
-            }
-            else -> throw IllegalArgumentException("Cannot undo action ${original.action} in v1")
+        val before = original.before?.let { json.decodeFromString(NoteSnapshot.serializer(), it) }
+        val afterRevision = original.after
+            ?.let { json.decodeFromString(NoteSnapshot.serializer(), it) }
+            ?.revision
+            ?: throw IllegalStateException("Audit entry $auditId has no after snapshot")
+
+        val current = database.noteDao().byId(original.entityId) ?: throw NoteMissingException(original.entityId)
+        if (current.revision != afterRevision) throw UndoStaleException(original.entityId, auditId)
+
+        val at = now()
+        val restoredTitle: String?
+        val restoredRawText: String?
+        val restoredStatus: NoteStatus
+        val restoredDeletedAt: Long?
+        if (before != null) {
+            restoredTitle = before.title
+            restoredRawText = before.rawText
+            restoredStatus = NoteStatus.valueOf(before.status)
+            restoredDeletedAt = before.deletedAt
+        } else {
+            // CREATE: nothing to restore to — undo soft-deletes, keeping the note's content.
+            restoredTitle = current.title
+            restoredRawText = current.rawText
+            restoredStatus = current.status
+            restoredDeletedAt = at
         }
+
+        val applied = database.withWriteTransaction {
+            val rows = database.noteDao().restoreSnapshotGuarded(
+                id = original.entityId,
+                title = restoredTitle,
+                rawText = restoredRawText,
+                status = restoredStatus,
+                deletedAt = restoredDeletedAt,
+                now = at,
+                revision = current.revision,
+            )
+            if (rows == 1) {
+                database.auditDao().append(
+                    entry(
+                        original.entityId,
+                        AuditAction.UNDO,
+                        AuditActor.USER,
+                        before = current.snapshot(),
+                        after = current.copy(
+                            title = restoredTitle,
+                            rawText = restoredRawText,
+                            status = restoredStatus,
+                            deletedAt = restoredDeletedAt,
+                            updatedAt = at,
+                            revision = current.revision + 1,
+                        ).snapshot(),
+                        at = at,
+                    ),
+                )
+            }
+            rows
+        }
+        if (applied != 1) throw UndoStaleException(original.entityId, auditId)
     }
 
     // ----------------------------------------------------------------- internal

@@ -37,6 +37,12 @@ class NoteConflictException(val noteId: String) : Exception("Note $noteId change
 /** Thrown when an operation names a note that does not exist (or is soft-deleted). */
 class NoteMissingException(val noteId: String) : Exception("Note $noteId does not exist")
 
+/** Thrown when [NoteCommandHandler.undo] is asked to undo an audit entry whose note has changed
+ *  since (plan 01 U1) — undo only ever restores a `before` snapshot onto the exact `after`
+ *  revision it followed, never onto whatever the note happens to be now. */
+class UndoStaleException(val noteId: String, val auditId: Long) :
+    Exception("Note $noteId changed since audit entry $auditId; refusing to undo onto a different revision")
+
 /**
  * Pure mapping from an ACTION_SEND share into a [CreateNoteRequest] — no Android types, fully
  * unit-testable. Returns null when the share carries no text at all.

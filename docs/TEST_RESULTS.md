@@ -1,5 +1,18 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 01 step 1b (undo redesign, optimistic concurrency, updateTitle) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
+**Result:** `BUILD SUCCESSFUL` — **107 tests, 0 failures, 0 errors, 2 skipped** (same two
+`@Ignore`d bug records: A3, G1). `assembleDebug` also green. No schema change.
+
+Fixes in this step (D29 in `docs/DECISIONS.md`): `undo()` redesigned to restore the exact
+`before` snapshot only when the note's revision still matches the audited action's `after`
+revision (stale otherwise, `UndoStaleException`) — RESTORE and a previous UNDO are now undoable,
+and undo-of-undo is redo. `updateRawText`/`updateTitle`/`setStatus`/`softDelete`/`restore` all
+accept an optional `expectedRevision` for optimistic concurrency. New `updateTitle` method
+(previously didn't exist).
+
 ## 2026-11-11 — Plan 01 step 1a (share hardening, soft-delete idempotency, snapshot fields) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
