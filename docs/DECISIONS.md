@@ -491,3 +491,60 @@ table change — that's UI wiring (`MainActivity.kt`), out of this step's scope.
 
 Verified locally: `./gradlew testDebugUnitTest` — 115 tests (was 107), 0 failures, 2 skipped
 (same two pre-existing bug records). `./gradlew assembleDebug` also green. No schema change.
+
+## D31 — Plan 01 step 1d: crash handling, revert safety, note-detail load, stale swipe state
+Nov 11, 2026. Executing `docs/plans/01-audit-punch-list.md` step 1d (X1, V1, N1, T1) — "smallest
+possible edits" to `MainActivity.kt`'s `MainViewModel`, `NoteDetailScreen`, `RevisionHistorySection`,
+`SwipeableNote`, and `MainActivity.onCreate`, per the execution table's files-allowed list.
+
+**X1 (no error handling):** added `UiError` (Conflict/Missing/Empty/Unknown), a `MainViewModel.errors:
+SharedFlow<UiError>`, and a `launchCommand(onError, block)` helper that wraps a `suspend` block in
+try/catch over `NoteConflictException`/`NoteMissingException`/`EmptyCaptureException`/`Exception`
+and reports to `errors`. All 22 of `MainViewModel`'s `viewModelScope.launch { ... }` call sites now
+go through it — mechanical, same behavior otherwise. `NoteDetailScreen` (the only screen in this
+step's scope) collects `errors` and shows a snackbar; wiring the other screens' own snackbars to
+the same flow is out of this step's scope and is left for whoever touches each screen next.
+Capture screens' "`saving` flag never resets on failure" (also under X1 in the audit) lives
+outside the five listed areas and is NOT fixed here.
+
+**V1 (revert can blank a note):** `RevisionRow`'s revert button only shows when the audited
+`before` snapshot actually has text to restore (`canRevert`) — the old `?: ""` fallback is gone
+entirely, so a missing/incomplete snapshot can no longer silently blank the note. "Current" is
+now the newest entry whose `after`-snapshot text matches the note's actual saved text, not just
+`entries[0]` (which could be a non-text action like a status change). Reverting while the editor
+has unsaved changes (`isEditorDirty`) now confirms via an `AlertDialog` first instead of silently
+discarding them.
+
+**N1 (note detail closes on first load):** `NoteDetailScreen` now reads the note through
+`MainViewModel.noteLookup` (new `NoteDao.observeById`, a live single-note query) via the new
+`NoteLookup` sealed type, so "no emission yet" (`Loading`) is distinguishable from "genuinely
+deleted" (`Missing`) — the old code read `allNotes`, which starts as an empty list on first
+composition, so every fresh open (including from a notification tap) looked exactly like a
+deleted note and closed the screen immediately. `MainActivity.onCreate` now calls
+`intent?.removeExtra(EXTRA_OPEN_NOTE_ID)` right after reading it, since a rotation recreates the
+Activity against the SAME `Intent` object — without this, every rotation re-triggered the
+"open this note" effect even after the user had navigated elsewhere. The `LaunchedEffect` that
+opens a note from a notification now clears EVERY `show*` screen flag, not just
+Reminders/Settings — previously the note could open successfully but stay hidden behind
+whichever other screen (Trash, Rules, …) happened to still be flagged open.
+
+**T1 (stale swipe state):** `SwipeableNote`'s drag-gesture block is keyed on `(note.id, canAdvance)`,
+and `canAdvance` stays `true` across an INBOX→ACTIVE→DONE sequence (every status but the last has
+a next one) — so after the first swipe, the block kept running with `note` captured at its OLD
+status, and a second swipe recomputed `nextStatus` from that stale status and repeated the first
+transition instead of advancing further. Fixed with `rememberUpdatedState(note)`, read inside the
+gesture callbacks instead of the outer captured `note`/`canAdvance`.
+
+Two touches outside this step's nominal file list, both necessary for the fix to exist at all
+(same precedent as Z2.12 in 1a and the `MainActivity.kt` branch in 1b): `NoteDao.observeById` in
+`core/db/Daos.kt` (N1 needs a live single-note query; nothing in the allowed files can provide
+one), and several new strings in `res/values/strings.xml` (Compose string resources can't be
+hardcoded in Kotlin per this app's own convention).
+
+No new automated tests this step — there's no Compose UI testing library in the project yet
+(`docs/plans/INDEX.md` OD-10 lists two test-only options, not yet approved), so these four fixes
+are verified by `./gradlew testDebugUnitTest assembleDebug` (115 tests, unchanged, 0 failures;
+APK builds) plus careful manual trace of each bug's reproduction steps against the new code.
+**Owner should exercise all four on-device**: trigger a conflict/missing/empty error and see the
+snackbar, revert a revision with unsaved edits in the editor, open a note from a notification
+after rotating, and swipe a note across two status transitions in a row.

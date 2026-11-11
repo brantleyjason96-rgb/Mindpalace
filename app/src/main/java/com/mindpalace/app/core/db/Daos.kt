@@ -43,6 +43,12 @@ interface NoteDao {
     @Query("SELECT * FROM notes WHERE id = :id")
     suspend fun byId(id: String): NoteEntity?
 
+    /** Live single-note lookup (plan 01 N1) — lets a detail screen tell "still loading" (no
+     *  emission yet) apart from "genuinely gone" (emits null), instead of treating an empty
+     *  not-yet-populated list the same as a deleted note. */
+    @Query("SELECT * FROM notes WHERE id = :id")
+    fun observeById(id: String): Flow<NoteEntity?>
+
     @Query("SELECT * FROM notes WHERE id IN (:ids)")
     suspend fun byIds(ids: List<String>): List<NoteEntity>
 
