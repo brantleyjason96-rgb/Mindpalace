@@ -2,6 +2,24 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 11 Part A (UI half): date-picker checks, Due/Snooze, notification actions
+
+### Added
+- Reminders split into "Due" (fired) and "Upcoming" sections; a Due reminder offers Snooze
+  (1 hour / tomorrow 8am) instead of Cancel.
+- "Mark done" and "Snooze 1h" notification action buttons — resolved without opening the app.
+
+### Fixed
+- The notification-permission callback skipped the exact-alarm check entirely; now re-runs the
+  full check. The exact-alarm dialog's second option now actually proceeds (approximate timing)
+  instead of only offering Settings.
+- A past time was silently accepted; the picker now rejects it inline and keeps the dialog open.
+- Reminder times now respect the system's 12/24-hour setting instead of a fixed format, and never
+  fall back to showing the raw stored value.
+
+This closes plan 11 Part A (both halves). Test count unchanged (138) — no Compose UI testing
+library in the project yet; verified by a full on-device check. See `docs/TEST_RESULTS.md`.
+
 ## Unreleased — 2026-11-11 — Plan 11 Part A (backend half): reliable time reminders
 
 ### Added

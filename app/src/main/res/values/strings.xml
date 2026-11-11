@@ -270,4 +270,11 @@
     <string name="reminder_pick_time">Pick date &amp; time</string>
     <string name="reminder_confirm">Set reminder</string>
     <string name="reminder_dialog_cancel">Cancel</string>
+    <string name="reminder_use_approximate">Use approximate timing</string>
+    <string name="reminder_past_time_error">Pick a time at least 30 seconds from now</string>
+    <string name="reminder_unknown_time">Unknown time</string>
+    <string name="reminder_due_section_title">Due</string>
+    <string name="reminder_upcoming_section_title">Upcoming</string>
+    <string name="reminder_snooze_1h">Snooze 1h</string>
+    <string name="reminder_snooze_tomorrow">Tomorrow 8am</string>
 </resources>

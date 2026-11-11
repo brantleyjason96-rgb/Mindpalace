@@ -1,5 +1,16 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 11 Part A, UI half — device check PASSED (SM-S948U, installed over existing app)
+
+Past-time rejection shows an inline error and keeps the picker open; a valid time saves and
+displays with correct locale formatting ("Wed, Nov 11, 6:55 PM" — no raw ISO `spec` shown); the
+reminder fired with both "Mark done"/"Snooze 1h" notification action buttons present; tapping
+"Snooze 1h" directly from the notification (screen locked, app never opened) re-armed the
+reminder exactly +1h with `fired_at` cleared — confirmed by reopening the app afterward and
+seeing "Wed, Nov 11, 7:56 PM" with Cancel (not Snooze) actions again, i.e. no longer "Due".
+`./gradlew testDebugUnitTest assembleDebug` — 138 tests (unchanged), 0 failures. No schema
+change. This closes plan 11 Part A (both halves). See D35 in `docs/DECISIONS.md`.
+
 ## 2026-11-11 — Plan 11 Part A device check — PASSED (SM-S948U, installed over existing app)
 
 A reminder set ~4 minutes out fired correctly while the phone was locked (correct note text,

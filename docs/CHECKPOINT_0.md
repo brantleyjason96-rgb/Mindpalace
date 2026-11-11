@@ -114,9 +114,15 @@ Each executed plan adds its own short device checks here, under a heading for th
    without opening the app. **Not run this pass** — needs a live reboot with a pending reminder
    timed around it; do on the next device session that touches this path.
 3. Turn off "Alarms & reminders" for Mind Palace in system settings; set a reminder → the app
-   offers approximate timing; it fires within about 15 minutes. **Not run this pass** — needs the
-   UI half (plan 11 Part A's picker/permission-recheck work), not yet built.
+   offers approximate timing; it fires within about 15 minutes. **Not run this pass** — the UI
+   half (2026-11-11) now has the "Use approximate timing" button this needs; still needs an
+   actual run with the system setting toggled off.
 4. Schema v3 → v4 migration preserves existing data. **PASS** (SM-S948U, 2026-11-11: installed
    over the existing app, pre-existing note and its full revision history intact after upgrade).
 5. Notification uses a real icon, not a blank square. **PASS** (SM-S948U, 2026-11-11: confirmed
    visually in the notification shade).
+6. Past-time rejection, locale-aware time display, Due/Snooze section, notification action
+   buttons (2026-11-11, UI half). **PASS** (SM-S948U: inline error on a past time; display shows
+   "Wed, Nov 11, 6:55 PM" not a raw ISO string; fired reminder showed Mark done/Snooze 1h actions
+   in the notification shade; tapping Snooze 1h there re-armed the reminder +1h without opening
+   the app).
