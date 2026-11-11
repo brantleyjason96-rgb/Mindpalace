@@ -137,6 +137,7 @@
     <string name="revision_action_delete">Deleted</string>
     <string name="revision_action_restore">Restored</string>
     <string name="revision_action_undo">Undo</string>
+    <string name="revision_action_update_title">Title changed</string>
     <string name="revision_actor_user">By you</string>
     <string name="revision_actor_rule">By a rule</string>
     <string name="revision_actor_ai">By AI (approved)</string>

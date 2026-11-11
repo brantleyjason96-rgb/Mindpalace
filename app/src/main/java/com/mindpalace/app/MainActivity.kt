@@ -2340,6 +2340,7 @@ private fun auditActionLabel(action: AuditAction): String = stringResource(
         AuditAction.SOFT_DELETE -> R.string.revision_action_delete
         AuditAction.RESTORE -> R.string.revision_action_restore
         AuditAction.UNDO -> R.string.revision_action_undo
+        AuditAction.UPDATE_TITLE -> R.string.revision_action_update_title
     },
 )
 

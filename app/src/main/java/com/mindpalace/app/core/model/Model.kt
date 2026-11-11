@@ -40,7 +40,7 @@ enum class JobState { PENDING, RUNNING, RETRY, SUCCEEDED, FAILED }
 enum class AuditActor { USER, RULE, AI, SYSTEM }
 
 /** Canonical mutations recorded for the `note` entity. */
-enum class AuditAction { CREATE, UPDATE_RAW_TEXT, SET_STATUS, SOFT_DELETE, RESTORE, UNDO }
+enum class AuditAction { CREATE, UPDATE_RAW_TEXT, SET_STATUS, SOFT_DELETE, RESTORE, UNDO, UPDATE_TITLE }
 
 /**
  * Origin of a derived fact (§6 derived.origin). Wire format: "user" | "system" | "rule:\<id\>" |

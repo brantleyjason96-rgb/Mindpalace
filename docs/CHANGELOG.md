@@ -2,6 +2,22 @@
 
 All notable changes. Dates are YYYY-MM-DD.
 
+## Unreleased — 2026-11-11 — Plan 01 step 1b: undo redesign, optimistic concurrency, updateTitle
+
+### Changed
+- `NoteCommandHandler.undo` redesigned: restores the recorded `before` snapshot only if the note's
+  revision still matches the audited action's `after` revision; otherwise throws the new
+  `UndoStaleException`. RESTORE and a previous UNDO are now undoable (previously refused outright);
+  undo-of-undo is redo.
+- `updateRawText`, `updateTitle`, `setStatus`, `softDelete`, and `restore` accept an optional
+  `expectedRevision` for optimistic concurrency (`NoteConflictException` on mismatch).
+
+### Added
+- `updateTitle(noteId, newTitle, actor, expectedRevision)` — there was no title edit before.
+  Audited as the new `AuditAction.UPDATE_TITLE`, undoable through the same path as any other edit.
+
+### Test count: 107 (was 98). See `docs/TEST_RESULTS.md`.
+
 ## Unreleased — 2026-11-11 — Plan 01 step 1a: share hardening, soft-delete idempotency
 
 ### Fixed

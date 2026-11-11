@@ -421,3 +421,40 @@ trail previously had no record of which file an ATTACHMENT/PHOTO note's audit en
 
 Verified locally: `./gradlew testDebugUnitTest` — 98 tests (was 91), 0 failures, 2 skipped (same
 two `@Ignore`d bug records, unrelated to this step). `./gradlew assembleDebug` also green.
+
+## D29 — Plan 01 step 1b: undo redesign (U1), per-call optimistic concurrency (H1), updateTitle (H2)
+Nov 11, 2026. Executing `docs/plans/01-audit-punch-list.md` step 1b.
+
+**U1 (undo redesign):** `undo(auditId)` no longer branches on the original action's type
+(CREATE/SOFT_DELETE/UPDATE_RAW_TEXT/SET_STATUS, with RESTORE/UNDO refused outright). It now:
+reads the audit entry's `after` snapshot revision, and refuses with the new
+`UndoStaleException` unless the note's CURRENT revision still equals it (i.e. nothing happened
+since that action) — then restores every undoable field (title, raw text, status, deleted_at)
+from the `before` snapshot in one guarded write (`NoteDao.restoreSnapshotGuarded`, deliberately
+with no `deleted_at IS NULL` condition, since the row can be in either delete state going in).
+`before == null` only happens for CREATE (nothing to restore to) — that case soft-deletes while
+keeping the note's current content.
+
+Consequence: RESTORE and a previous UNDO are now undoable (the old code refused them outright),
+and "undo of undo is redo" falls out of the design for free — no special-casing needed. A second
+undo of the same audit entry, or an undo after any other change, now uniformly throws
+`UndoStaleException` (not two different old exceptions depending on which action it was).
+
+**H1 (optimistic concurrency):** `updateRawText`, `updateTitle`, `setStatus`, `softDelete`, and
+`restore` all gained an `expectedRevision: Int? = null` parameter; when given and it doesn't
+match the note's current revision, throws `NoteConflictException` before touching anything. No
+UI calls these with a real value yet (that's plan 07) — this just gives the future editor
+something to pass.
+
+**H2 (updateTitle):** new `updateTitle(noteId, newTitle, actor, expectedRevision)`, mirroring
+`updateRawText`'s shape exactly (no-op if unchanged, audited as the new `AuditAction.UPDATE_TITLE`,
+undoable through the same `undo()` path). Required one line in `MainActivity.kt` outside this
+step's nominal file list — `auditActionLabel`'s `when (action)` over `AuditAction` stopped being
+exhaustive and the project wouldn't compile at all without a label for the new action. Added
+`revision_action_update_title` ("Title changed") and the missing `when` branch rather than leave
+the build broken; this is the same kind of small, unavoidable touch as Z2.12 in step 1a.
+
+Verified locally: `./gradlew testDebugUnitTest` — 107 tests (was 98), 0 failures, 2 skipped
+(same two pre-existing `@Ignore`d bug records). `./gradlew assembleDebug` also green. No schema
+change (plan 01 step 1a/1b together don't touch the schema, per `docs/plans/01-audit-punch-list.md`'s
+execution table).
