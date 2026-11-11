@@ -272,6 +272,15 @@ interface ReminderDao {
     @Query("UPDATE reminders SET state = :state, snoozed_until = :snoozedUntil WHERE id = :id")
     suspend fun setState(id: String, state: ReminderState, snoozedUntil: Long?): Int
 
+    /** Marks a reminder as fired (plan 11 Part A) — makes [com.mindpalace.app.core.commands.ReminderCommands.fire]
+     *  idempotent: a second call for the same reminder is a no-op once `fired_at` is set. */
+    @Query("UPDATE reminders SET fired_at = :firedAt WHERE id = :id")
+    suspend fun setFiredAt(id: String, firedAt: Long?): Int
+
+    /** Re-arms a reminder at a new time and clears any prior fired marker, in one write. */
+    @Query("UPDATE reminders SET fire_at = :fireAt, fired_at = NULL WHERE id = :id")
+    suspend fun snoozeTo(id: String, fireAt: Long): Int
+
     @Query("SELECT COUNT(*) FROM reminders")
     suspend fun count(): Int
 }

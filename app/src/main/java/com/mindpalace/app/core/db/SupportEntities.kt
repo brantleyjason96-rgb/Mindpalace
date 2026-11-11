@@ -184,6 +184,18 @@ data class ReminderEntity(
 
     @ColumnInfo(name = "created_at")
     val createdAt: Long,
+
+    /** Parsed epoch millis of [spec] for a TIME reminder (plan 11 Part A, schema v4) — avoids
+     *  re-parsing the ISO string on every read/scheduling decision. Null for non-TIME reminders
+     *  or an unparseable spec. [ReminderPlanner] is the only thing that reads this to decide
+     *  whether/how to schedule. */
+    @ColumnInfo(name = "fire_at")
+    val fireAt: Long? = null,
+
+    /** Set once this reminder has posted its notification — makes firing idempotent and lets the
+     *  Reminders screen show it under "Due" instead of re-firing it on every reschedule pass. */
+    @ColumnInfo(name = "fired_at")
+    val firedAt: Long? = null,
 )
 
 /**

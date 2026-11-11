@@ -16,21 +16,27 @@ fun ReminderEntity.scheduledAtMillis(): Long? = runCatching { Instant.parse(spec
 fun millisToSpec(atMillis: Long): String = Instant.ofEpochMilli(atMillis).toString()
 
 /**
- * Exact-alarm scheduling for TIME reminders (D19). AlarmManager alarms don't survive reboot —
- * [com.mindpalace.app.core.reminders.BootReceiver] re-schedules every still-active, still-future
- * one. A reminder whose time has already passed is simply never scheduled/rescheduled.
+ * Alarm scheduling for TIME reminders (D19; plan 11 Part A) — applies a decision already made by
+ * [ReminderPlanner]; it doesn't decide whether/when to fire itself. AlarmManager alarms don't
+ * survive reboot — [com.mindpalace.app.core.commands.ReminderCommands.rescheduleAll] (called from
+ * [BootReceiver], `Application.onCreate`, and [ExactAlarmPermissionChangedReceiver]) re-plans and
+ * re-applies every still-active one.
  */
 object AlarmScheduler {
 
     fun canScheduleExact(context: Context): Boolean =
         context.getSystemService(AlarmManager::class.java).canScheduleExactAlarms()
 
-    fun schedule(context: Context, reminder: ReminderEntity) {
-        val atMillis = reminder.scheduledAtMillis() ?: return
-        if (atMillis <= System.currentTimeMillis()) return
-        if (!canScheduleExact(context)) return
-        val alarmManager = context.getSystemService(AlarmManager::class.java)
-        alarmManager.setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntentFor(context, reminder))
+    /** [AlarmPlan.Exact] — fires within about a second of [atMillis]. */
+    fun scheduleExact(context: Context, reminder: ReminderEntity, atMillis: Long) {
+        context.getSystemService(AlarmManager::class.java)
+            .setExactAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntentFor(context, reminder))
+    }
+
+    /** [AlarmPlan.Inexact] — needs no permission; may fire several minutes late. */
+    fun scheduleInexact(context: Context, reminder: ReminderEntity, atMillis: Long) {
+        context.getSystemService(AlarmManager::class.java)
+            .setAndAllowWhileIdle(AlarmManager.RTC_WAKEUP, atMillis, pendingIntentFor(context, reminder))
     }
 
     fun cancel(context: Context, reminder: ReminderEntity) {

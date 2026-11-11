@@ -7,12 +7,16 @@ import androidx.sqlite.driver.bundled.BundledSQLiteDriver
 import com.mindpalace.app.ai.AiNightRunner
 import com.mindpalace.app.ai.AiNightWorker
 import com.mindpalace.app.core.commands.NoteCommandHandler
+import com.mindpalace.app.core.commands.ReminderCommands
 import com.mindpalace.app.core.db.ALL_MIGRATIONS
 import com.mindpalace.app.core.db.MindPalaceDatabase
 import com.mindpalace.app.core.reminders.NotificationHelper
 import com.mindpalace.app.export.NoteExporter
 import androidx.work.Configuration
 import androidx.work.WorkManager
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 
 /**
  * Tiny manual DI container (docs/DECISIONS.md D8 — deliberately no Hilt while the backend is
@@ -39,6 +43,8 @@ class AppContainer(context: Context) {
 
     val commands = NoteCommandHandler(database)
 
+    val reminderCommands = ReminderCommands(database)
+
     val aiNightRunner = AiNightRunner(database)
 
     val exporter = NoteExporter(database.noteDao())
@@ -64,6 +70,10 @@ class MindPalaceApplication : Application() {
         NotificationHelper.createChannel(this)
         ensureWorkManagerInitialized()
         AiNightWorker.schedule(this)
+        // AlarmManager drops every alarm on both a reboot (BootReceiver already covers that) and
+        // an app update/replace (MY_PACKAGE_REPLACED) — this covers the latter, and also catches
+        // up anything missed since the app was last running (plan 11 Part A R1#3).
+        CoroutineScope(Dispatchers.IO).launch { container.reminderCommands.rescheduleAll(this@MindPalaceApplication) }
     }
 
     /**

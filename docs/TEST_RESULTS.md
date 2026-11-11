@@ -1,5 +1,22 @@
 # TEST RESULTS
 
+## 2026-11-11 — Plan 11 Part A, backend half (reliable time reminders) — ALL GREEN (local JVM)
+
+**Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`
+**Result:** `BUILD SUCCESSFUL` — **138 tests (was 122, +16), 0 failures, 0 errors, 2 skipped**
+(same two pre-existing `@Ignore`d bug records). `assembleDebug` also green. Schema v3 → v4
+(`reminders.fire_at`/`fired_at`); permission list unchanged.
+
+Added (D34 in `docs/DECISIONS.md`): `ReminderPlanner` (pure decision function: Exact/Inexact/
+FireNow/Nothing), `ReminderCommands` (add/cancel/complete/snooze/fire/rescheduleAll — the one
+place reminder writes and scheduling now happen), a monochrome notification icon (the launcher
+mipmap was rendering as a blank square), and a new manifest receiver that re-plans reminders when
+the user changes the exact-alarm permission in system settings. **This is the backend half only**
+— the UI half (re-checking permissions on every path into the date picker, rejecting a past time
+inline, localized time formatting, a "Due"/Snooze section) is a separate unit with no automated
+test coverage, still to come, needing a device check before merge (same situation as plan 01 step
+1d).
+
 ## 2026-11-11 — Plan 14 (migration test framework) — ALL GREEN (local JVM)
 
 **Command:** `JAVA_HOME="/Applications/Android Studio.app/Contents/jbr/Contents/Home" ./gradlew testDebugUnitTest assembleDebug`

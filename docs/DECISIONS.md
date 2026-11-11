@@ -605,3 +605,55 @@ either way, T-MIG6 (schema-file-exists) keeps it honest.
 Verified locally: `./gradlew testDebugUnitTest assembleDebug` — 122 tests (was 115, +7 exactly as
 the plan's "done when" specifies), 0 failures, 2 skipped (same pre-existing bug records). No
 schema change — `app/schemas` untouched, confirmed via `git diff --stat`.
+
+## D34 — Plan 11 Part A (backend): reliable time reminders — ReminderPlanner/ReminderCommands, schema v4
+Nov 11, 2026. Executing `docs/plans/11-reminders-geofences-calendar.md` Part A's backend half
+(A1 problems 1, 2, 3, 4, 6, 9, 10; UI-facing problems 5, 7, 8, and the device checklist are a
+separate, riskier unit — see below).
+
+**Schema v4, not the plan's placeholder "v6":** `docs/plans/INDEX.md` says whichever
+schema-touching plan runs first takes the next free version; plans 10 (rules, v4) and 12 (AI, v5)
+haven't landed, so this one is `MIGRATION_3_4`, not `MIGRATION_5_6`. `reminders` gains nullable
+`fire_at`/`fired_at`; `fire_at` is backfilled from each TIME row's existing `spec` (unparseable
+specs are left NULL, same as the plan specifies).
+
+**`ReminderPlanner`** (new, pure, no Android types): one function decides `Exact`/`Inexact`/
+`FireNow`/`Nothing` for a reminder given `now`, whether exact alarms are currently allowed, and
+whether its note is deleted — replacing the ad hoc "silently return" logic that used to live
+inside `AlarmScheduler.schedule` (R1#1: an exact-alarm denial used to leave the row `ACTIVE` and
+never scheduled, with nothing anywhere ever re-deciding it; R1#2: a past time was simply never
+scheduled instead of firing).
+
+**`ReminderCommands`** (new) is now the one place that writes reminder state and applies a plan:
+`add` (rejects a time less than 30s out — R1#2), `cancel`, `complete`, `snooze`, `fire` (posts the
+notification, idempotent via `fired_at` — R1#4/#10, and the same function
+`ReminderAlarmReceiver`'s exact-alarm firing calls), and `rescheduleAll` (re-plans every active
+TIME reminder; called from `BootReceiver` — R1#3, `MindPalaceApplication.onCreate` — covers
+`MY_PACKAGE_REPLACED` plus anything missed since the app last ran, and a new
+`ExactAlarmPermissionChangedReceiver` listening for
+`SCHEDULE_EXACT_ALARM_PERMISSION_STATE_CHANGED` — R1#6, needs no permission of its own).
+`AlarmScheduler` no longer decides anything; it just applies `scheduleExact`/`scheduleInexact`/
+`cancel` for a plan already made.
+
+**R1#7 (blank notification icon):** new `res/drawable/ic_stat_reminder.xml` (a flat monochrome
+bell glyph) replaces `R.mipmap.ic_launcher` as the notification's small icon — a full-color
+mipmap is not a valid small-icon shape and was rendering as a blank square on most phones.
+
+**Not done in this unit** (separate, UI-facing, needs a device check before merge — no automated
+test coverage exists for Compose UI yet): re-checking the exact-alarm/notification-permission
+state on every path into the date picker (R1#1's UI half), rejecting a past time in the picker
+with an inline message, formatting times with `DateFormat.getBestDateTimePattern` instead of a
+fixed pattern, a "Due" section with Snooze actions in `RemindersScreen`/`ReminderSection`. `R1#8`
+(ViewModel writes going through `ReminderCommands` instead of raw DAOs) is partially addressed —
+`addReminder`/`cancelReminder`/`completeReminder` now delegate to `ReminderCommands`, which is not
+yet audited through `NoteCommandHandler` (D19 already excluded reminders from the note audit
+trail; unchanged here). `R1#9` (showing the raw ISO `spec` as a fallback) is unchanged — still
+part of the UI unit.
+
+Verified locally: `./gradlew testDebugUnitTest assembleDebug` — 138 tests (was 122, +16: 8
+`ReminderPlannerTest`, 7 `ReminderCommandsTest` — Robolectric with `ShadowAlarmManager`/
+`ShadowNotificationManager` — and 1 migration test for the v3→v4 backfill), 0 failures, 2 skipped
+(same pre-existing bug records). Permission list unchanged (`PrivacyManifestTest` still green) —
+the new receiver needs no permission. `versionCode`/`versionName` bumped to 6/0.6.0 (D12) in
+`app/build.gradle.kts`, outside this part's nominal file list but required by that policy on any
+schema change — same precedent as earlier necessary out-of-scope touches this session.

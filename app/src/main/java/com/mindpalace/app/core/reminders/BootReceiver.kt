@@ -8,7 +8,8 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
-/** AlarmManager drops every alarm on reboot; this re-schedules what's still active and future. */
+/** AlarmManager drops every alarm on reboot; this re-plans and re-applies every still-active
+ *  TIME reminder (including firing any that were missed while the phone was off, R1#3). */
 class BootReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         if (intent.action != Intent.ACTION_BOOT_COMPLETED) return
@@ -16,9 +17,7 @@ class BootReceiver : BroadcastReceiver() {
         val container = (context.applicationContext as MindPalaceApplication).container
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                container.database.reminderDao().activeTimeReminders().forEach { reminder ->
-                    AlarmScheduler.schedule(context, reminder)
-                }
+                container.reminderCommands.rescheduleAll(context)
             } finally {
                 pending.finish()
             }
