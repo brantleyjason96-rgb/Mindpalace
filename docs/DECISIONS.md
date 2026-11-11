@@ -90,6 +90,90 @@ constrained by a GBNF grammar, short prompts (context capped ~4k), AI output goe
 or battery limits. Budget math: ~100 output tokens/note ≈ 10 s of generation → roughly 150–250
 notes/hour; the loop works on notes changed since the last run, not the whole archive.
 
+## D14 — Geofenced place reminders are in scope
+Nov 9, 2026. Owner decision. Cost accepted: location permission (background access for reliable
+triggers) and likely Google Play Services geofencing. To be recorded in `docs/PERMISSIONS.md` when
+built; `PrivacyManifestTest` gets a deliberate, documented update then (never silently loosened).
+Time-based reminders ship first; places follow. Still open: whether Play Services geofencing is
+acceptable vs. a Play-Services-free fallback.
+
+## D15 — Voice capture: on-device SpeechRecognizer, RECORD_AUDIO approved
+Nov 9, 2026. Owner sign-off to add `android.permission.RECORD_AUDIO` (docs/PERMISSIONS.md),
+`PrivacyManifestTest` updated deliberately to allow it. Implementation: `SpeechRecognizer` with
+`RecognizerIntent.EXTRA_PREFER_OFFLINE = true` (on-device, no network attempted regardless — D4
+holds either way). Dedicated "Voice capture" screen shows a permission explainer before the system
+prompt and a live transcript while listening. On Save, the transcript goes straight through
+`NoteCommandHandler.create` (`source = VOICE`, `transcript = ...`) — same save-first path as every
+other source. No raw audio is recorded or stored; only the transcript.
+
+## D16 — Rules engine: keyword matcher → category action, additive derived facts
+Nov 9, 2026. Pure Kotlin evaluator (`core/rules/RuleEngine.kt`, no Android types): a rule is a
+keyword matcher (case-insensitive substring, any-of) and a category action; rules run in list
+order and the first enabled match wins. Runs once, inside `NoteCommandHandler.create`'s existing
+transaction, right after the system Inbox default is seeded. A match ADDS a second CATEGORY
+derived row (`origin = rule:<id>`) alongside the system one rather than replacing it — the derived
+table's primary key is (note_id, field, value, origin), so this is naturally idempotent and never
+destroys the system default. Reconciling "which category wins when several exist" is a surfacing
+concern (Phase 4, D11), deliberately not solved here. Rules currently apply only at capture time
+("after save"), not retroactively on edits — re-evaluating on every raw-text edit is a plausible
+future extension, not built because nothing asked for it yet.
+
+## D17 — Camera/OCR: bundled ML Kit, system camera/photo-picker intents, no new permission
+Nov 9, 2026. `com.google.mlkit:text-recognition:16.0.1` (the bundled variant — the model ships in
+the APK, ~4MB, never the Play-Services/unbundled variant that lazily installs a dynamic module).
+Its transitive Play-Services-base manifest declares INTERNET + ACCESS_NETWORK_STATE defensively
+regardless; both are stripped via `tools:node="remove"` in AndroidManifest.xml since OCR never
+makes a network call either way — `PrivacyManifestTest` verified green with them removed.
+Capture uses the system camera app (`MediaStore.ACTION_IMAGE_CAPTURE`, output to a FileProvider
+URI in app-private storage) and the Android 13+ Photo Picker (`PickVisualMedia`) for "choose from
+gallery" — **neither requires a CAMERA or READ_MEDIA_IMAGES permission**, matching the feature
+plan's "no camera permission" requirement exactly. OCR runs on-device against the captured/picked
+image; the recognized text is reviewable/editable before the first save (not yet "sacred" — it
+becomes sacred once saved), then goes through the normal `NoteCommandHandler.create`
+(`source = PHOTO`, `ocrText`, `imagePath` pointing at the saved copy in app-private storage).
+
+## D18 — Topics/People/Places: append-only vocab; note links are explicit-only for now
+Nov 9, 2026. Three screens (reachable from Settings) share one `VocabScreen` composable: a name
+field + Add, and a plain list — no delete, no merge/edit. Why: nothing yet references these
+vocabularies from a note (that's the still-open "tags" part of the note-detail screen, deliberately
+NOT built in this pass), so there's nothing to clean up yet; and §7 says two plausible person/place
+matches must ask the user, not silently merge — building a merge UI ahead of any real matching
+logic would be speculative. Note detail gained a **Links** section instead: existing links
+(`noteLinkDao.observeTouching`) shown and tappable (navigates to the other note), plus "Add link"
+→ an inline filtered picker over `allNotes` that inserts a `NoteLinkEntity(type=EXPLICIT,
+state=CONFIRMED)` directly — consistent with how Rules already writes its own table straight from
+the ViewModel (no audit trail for this table, same as rules/categories).
+
+## D19 — Reminders: AlarmManager, time-based only, three permissions approved
+Nov 9, 2026. Owner sign-off for `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, and
+`RECEIVE_BOOT_COMPLETED` (docs/PERMISSIONS.md). Scope is TIME reminders only — place/geofenced
+reminders stay deferred per D14 ("time-based reminders ship first; places follow"); no location
+permission is requested here. `ReminderAlarmReceiver` fires a notification when a reminder's exact
+time arrives; `BootReceiver` re-schedules every still-active, still-future TIME reminder after a
+reboot (AlarmManager drops all alarms on reboot otherwise). A reminder is created from the note
+detail screen (date+time picker → `AlarmScheduler.schedule`); a global Reminders screen
+(Settings) lists every ACTIVE reminder with Mark done / Cancel, both of which cancel the
+underlying alarm. `ReminderState.DONE`/`CANCELLED` are terminal — no undo, consistent with rules
+and derived facts not going through the audited note-mutation path.
+
+## D20 — Editable categories: new `categories` table, schema v1 → v2
+Nov 9, 2026. Closes the last gap in the original screen backlog's Settings item ("editable
+categories (6 defaults in DEFAULT_CATEGORIES)"). New `categories` table (name TEXT PRIMARY KEY,
+position, created_at), added via `MIGRATION_1_2` which also seeds the six original defaults in
+their original order — `DEFAULT_CATEGORIES` in Model.kt is now only that seed list, not the live
+source of truth. Settings > Categories reuses the existing `VocabScreen` (same shape as
+Topics/People/Places, D18): add-only, no rename/delete, for the same reason — rule actions and
+derived CATEGORY facts already reference categories by name string, and renaming/deleting would
+orphan those references without a cascade story this doesn't need yet. Rules' "New rule" category
+picker now reads from this table instead of the hardcoded constant, so a category added in
+Settings immediately becomes available there too. First real schema migration in this project;
+added `androidx.room3:room3-testing` + a `MigrationTestHelper`-based test verifying the seed data
+survives the 1→2 migration in order. One non-obvious wiring note: Robolectric's local JVM unit
+tests reuse the **main** `debug` variant's merged assets directory (confirmed via
+`test_config.properties` → `android_merged_assets`), not a test-only one — so the exported schema
+JSON had to be added to the `main` sourceSet's assets, not `test`, for `MigrationTestHelper` to
+find it at all.
+
 ## D21 — Visual/motion polish pass: custom icons, tinted shadows, haptics, screen transitions
 Nov 9, 2026. No new dependency: `core/ui/CaptureIcons.kt` hand-draws the mic/camera glyphs via
 Canvas (emoji don't tint to the theme or render consistently across devices/dark-mode), and
@@ -115,83 +199,6 @@ proven to work on the actual owner device, so it's now the single haptic languag
 Composer fix: the mic/camera buttons now hide whenever either field is focused (`!expanded`), not
 only once there's text (`!canSave` previously) — they were staying visible while the keyboard was
 open with empty fields, cluttering the one moment the user is clearly mid-type.
-
-## D20 — Editable categories: new `categories` table, schema v1 → v2
-Nov 9, 2026. Closes the last gap in the original screen backlog's Settings item ("editable
-categories (6 defaults in DEFAULT_CATEGORIES)"). New `categories` table (name TEXT PRIMARY KEY,
-position, created_at), added via `MIGRATION_1_2` which also seeds the six original defaults in
-their original order — `DEFAULT_CATEGORIES` in Model.kt is now only that seed list, not the live
-source of truth. Settings > Categories reuses the existing `VocabScreen` (same shape as
-Topics/People/Places, D18): add-only, no rename/delete, for the same reason — rule actions and
-derived CATEGORY facts already reference categories by name string, and renaming/deleting would
-orphan those references without a cascade story this doesn't need yet. Rules' "New rule" category
-picker now reads from this table instead of the hardcoded constant, so a category added in
-Settings immediately becomes available there too. First real schema migration in this project;
-added `androidx.room3:room3-testing` + a `MigrationTestHelper`-based test verifying the seed data
-survives the 1→2 migration in order. One non-obvious wiring note: Robolectric's local JVM unit
-tests reuse the **main** `debug` variant's merged assets directory (confirmed via
-`test_config.properties` → `android_merged_assets`), not a test-only one — so the exported schema
-JSON had to be added to the `main` sourceSet's assets, not `test`, for `MigrationTestHelper` to
-find it at all.
-
-## D19 — Reminders: AlarmManager, time-based only, three permissions approved
-Nov 9, 2026. Owner sign-off for `POST_NOTIFICATIONS`, `SCHEDULE_EXACT_ALARM`, and
-`RECEIVE_BOOT_COMPLETED` (docs/PERMISSIONS.md). Scope is TIME reminders only — place/geofenced
-reminders stay deferred per D14 ("time-based reminders ship first; places follow"); no location
-permission is requested here. `ReminderAlarmReceiver` fires a notification when a reminder's exact
-time arrives; `BootReceiver` re-schedules every still-active, still-future TIME reminder after a
-reboot (AlarmManager drops all alarms on reboot otherwise). A reminder is created from the note
-detail screen (date+time picker → `AlarmScheduler.schedule`); a global Reminders screen
-(Settings) lists every ACTIVE reminder with Mark done / Cancel, both of which cancel the
-underlying alarm. `ReminderState.DONE`/`CANCELLED` are terminal — no undo, consistent with rules
-and derived facts not going through the audited note-mutation path.
-
-## D18 — Topics/People/Places: append-only vocab; note links are explicit-only for now
-Nov 9, 2026. Three screens (reachable from Settings) share one `VocabScreen` composable: a name
-field + Add, and a plain list — no delete, no merge/edit. Why: nothing yet references these
-vocabularies from a note (that's the still-open "tags" part of the note-detail screen, deliberately
-NOT built in this pass), so there's nothing to clean up yet; and §7 says two plausible person/place
-matches must ask the user, not silently merge — building a merge UI ahead of any real matching
-logic would be speculative. Note detail gained a **Links** section instead: existing links
-(`noteLinkDao.observeTouching`) shown and tappable (navigates to the other note), plus "Add link"
-→ an inline filtered picker over `allNotes` that inserts a `NoteLinkEntity(type=EXPLICIT,
-state=CONFIRMED)` directly — consistent with how Rules already writes its own table straight from
-the ViewModel (no audit trail for this table, same as rules/categories).
-
-## D17 — Camera/OCR: bundled ML Kit, system camera/photo-picker intents, no new permission
-Nov 9, 2026. `com.google.mlkit:text-recognition:16.0.1` (the bundled variant — the model ships in
-the APK, ~4MB, never the Play-Services/unbundled variant that lazily installs a dynamic module).
-Its transitive Play-Services-base manifest declares INTERNET + ACCESS_NETWORK_STATE defensively
-regardless; both are stripped via `tools:node="remove"` in AndroidManifest.xml since OCR never
-makes a network call either way — `PrivacyManifestTest` verified green with them removed.
-Capture uses the system camera app (`MediaStore.ACTION_IMAGE_CAPTURE`, output to a FileProvider
-URI in app-private storage) and the Android 13+ Photo Picker (`PickVisualMedia`) for "choose from
-gallery" — **neither requires a CAMERA or READ_MEDIA_IMAGES permission**, matching the feature
-plan's "no camera permission" requirement exactly. OCR runs on-device against the captured/picked
-image; the recognized text is reviewable/editable before the first save (not yet "sacred" — it
-becomes sacred once saved), then goes through the normal `NoteCommandHandler.create`
-(`source = PHOTO`, `ocrText`, `imagePath` pointing at the saved copy in app-private storage).
-
-## D16 — Rules engine: keyword matcher → category action, additive derived facts
-Nov 9, 2026. Pure Kotlin evaluator (`core/rules/RuleEngine.kt`, no Android types): a rule is a
-keyword matcher (case-insensitive substring, any-of) and a category action; rules run in list
-order and the first enabled match wins. Runs once, inside `NoteCommandHandler.create`'s existing
-transaction, right after the system Inbox default is seeded. A match ADDS a second CATEGORY
-derived row (`origin = rule:<id>`) alongside the system one rather than replacing it — the derived
-table's primary key is (note_id, field, value, origin), so this is naturally idempotent and never
-destroys the system default. Reconciling "which category wins when several exist" is a surfacing
-concern (Phase 4, D11), deliberately not solved here. Rules currently apply only at capture time
-("after save"), not retroactively on edits — re-evaluating on every raw-text edit is a plausible
-future extension, not built because nothing asked for it yet.
-
-## D15 — Voice capture: on-device SpeechRecognizer, RECORD_AUDIO approved
-Nov 9, 2026. Owner sign-off to add `android.permission.RECORD_AUDIO` (docs/PERMISSIONS.md),
-`PrivacyManifestTest` updated deliberately to allow it. Implementation: `SpeechRecognizer` with
-`RecognizerIntent.EXTRA_PREFER_OFFLINE = true` (on-device, no network attempted regardless — D4
-holds either way). Dedicated "Voice capture" screen shows a permission explainer before the system
-prompt and a live transcript while listening. On Save, the transcript goes straight through
-`NoteCommandHandler.create` (`source = VOICE`, `transcript = ...`) — same save-first path as every
-other source. No raw audio is recorded or stored; only the transcript.
 
 ## D22 — AI spike: llama.cpp vendored + built via NDK/CMake, measured on-device speed confirms D13
 Nov 9, 2026. Per D13/CLAUDE.md's instruction to "spike speed/battery before building around it,"
@@ -254,13 +261,6 @@ Validated on-device (Jason's S26 Ultra, real 5-note database, Qwen3 4B Q4_K_M): 
 evidence quotes that are exact substrings of the actual transcripts, 0 `ai_index` rows (all 5 notes
 were under 50 words, so no summary was correctly expected) — confirms the grammar, validator, and
 word-count cutoff all behave as designed on real hardware, not just in theory.
-
-## D14 — Geofenced place reminders are in scope
-Nov 9, 2026. Owner decision. Cost accepted: location permission (background access for reliable
-triggers) and likely Google Play Services geofencing. To be recorded in `docs/PERMISSIONS.md` when
-built; `PrivacyManifestTest` gets a deliberate, documented update then (never silently loosened).
-Time-based reminders ship first; places follow. Still open: whether Play Services geofencing is
-acceptable vs. a Play-Services-free fallback.
 
 ## D24 — Nightly AI scheduling via WorkManager; WAKE_LOCK + FOREGROUND_SERVICE approved
 Nov 10, 2026. `AiNightRunner` (D23) had no scheduler — the only way to run it was the debug "Run
@@ -548,3 +548,28 @@ APK builds) plus careful manual trace of each bug's reproduction steps against t
 **Owner should exercise all four on-device**: trigger a conflict/missing/empty error and see the
 snackbar, revert a revision with unsaved edits in the editor, open a note from a notification
 after rotating, and swipe a note across two status transitions in a row.
+
+Device check passed 2026-11-11 (SM-S948U, installed over the existing app via `installDebug`,
+all four behaviors confirmed) — merged to `main`.
+
+## D32 — Plan 01 step 1e: CLAUDE.md/README rewritten, decision log reordered
+Nov 11, 2026. Closes Z1 from `docs/plans/01-audit-punch-list.md` — the last step of plan 01's
+punch list. `CLAUDE.md` and `README.md` both still described the 2026-11-08 snapshot (27 tests,
+"UI never compiled", a screen backlog that's now entirely built) with a stopgap note pointing at
+this step; rewrote both to the current, verifiable state instead (115 tests, schema v3,
+versionCode 5/0.5.0, D31 latest). `docs/DECISIONS.md`'s D14–D23 were written out of chronological
+order as decisions actually landed (whichever feature was being worked on got the next D-number,
+but features were picked up and set down in a different order than they're numbered) — reordered
+to ascending D1–D31 by a scripted block move; verified no content was altered, only position.
+`MainActivity.kt`'s header comment corrected: it asserted "the UI never touches DAOs for writes,"
+which plan 01's W1 finding (not yet fixed) shows is false for several vocabulary/rules/reminder
+writes in `MainViewModel`.
+
+Plan 01's punch list (steps 1a–1e) is now fully executed. Remaining P1/P2 items from the audit
+(A1–A5 AI dedup, G1/G2 rules, W1 direct-DAO writes, D1 full-list loading, M1/M2 capture drafts,
+C3/T1 already fixed in 1a/1d, Y1 accessibility, Z2 cleanup) route to their own plans (10–17) per
+`docs/plans/INDEX.md`'s execution order — next up there is plan 14 (migration test framework),
+then plan 07 (the `MainActivity.kt` split), before the hardening plans (08–13) that depend on it.
+
+Verified locally: `./gradlew testDebugUnitTest assembleDebug` — 115 tests (unchanged), 0
+failures, 2 skipped. Docs-only + one comment change; no production logic touched.
